@@ -219,8 +219,6 @@ fi
 PACKAGE_NAME="cerium-release"
 PACKAGE_VERSION="${DYNAMIC_BRAVE_VERSION}"
 PACKAGE_REGISTRY_BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${PACKAGE_NAME}/${PACKAGE_VERSION}"
-MASTER_SHA256_FILE="$(mktemp /tmp/master-sha256-XXXXXX.txt)"
-trap 'rm -f "${MASTER_SHA256_FILE}"' EXIT
 
 declare -a UPLOADED_ITEMS_JSON=()
 
@@ -259,8 +257,6 @@ for pkg in "${PACKAGES_FOUND[@]}"; do
     pkg_sha="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   fi
 
-  echo "${pkg_sha}  ${bname}" >> "${MASTER_SHA256_FILE}"
-
   if [[ "${DRY_RUN}" == "true" ]]; then
     echo "[DRY-RUN] Upload ${bname} -> ${pkg_url}"
   else
@@ -277,28 +273,17 @@ for pkg in "${PACKAGES_FOUND[@]}"; do
   UPLOADED_ITEMS_JSON+=("${item_json}")
 done
 
-FULL_SHA256_URL="${PACKAGE_REGISTRY_BASE}/SHA256SUMS.txt"
-if [[ "${DRY_RUN}" == "true" ]]; then
-  echo "[DRY-RUN] Upload SHA256SUMS.txt -> ${FULL_SHA256_URL}"
-else
-  curl --fail-with-body --silent --show-error --location \
-    --header "JOB-TOKEN: ${CI_JOB_TOKEN}" \
-    --upload-file "${MASTER_SHA256_FILE}" \
-    "${FULL_SHA256_URL}"
-fi
-
 # ------------------------------------------------------------------------------
 # 5. Step 2: Build GitLab Release JSON Payload
 # ------------------------------------------------------------------------------
-RELEASE_PAYLOAD="$(python3 - "${DYNAMIC_BRAVE_VERSION}" "${CI_COMMIT_SHA}" "${DYNAMIC_CHROMIUM_VERSION}" "${FULL_SHA256_URL}" "${RELEASE_TAG}" "${UPLOADED_ITEMS_JSON[@]}" <<'PYEOF'
+RELEASE_PAYLOAD="$(python3 - "${DYNAMIC_BRAVE_VERSION}" "${CI_COMMIT_SHA}" "${DYNAMIC_CHROMIUM_VERSION}" "${RELEASE_TAG}" "${UPLOADED_ITEMS_JSON[@]}" <<'PYEOF'
 import json, sys
 
 version = sys.argv[1]
 commit_sha = sys.argv[2]
 chromium_version = sys.argv[3]
-sha256_url = sys.argv[4]
-tag_name = sys.argv[5]
-raw_items = [json.loads(x) for x in sys.argv[6:]]
+tag_name = sys.argv[4]
+raw_items = [json.loads(x) for x in sys.argv[5:]]
 seen_item_names = set()
 items = []
 for it in raw_items:
@@ -346,9 +331,6 @@ for it in items:
     if it["name"] not in seen_links:
         seen_links.add(it["name"])
         links.append({"name": it["name"], "url": it["url"], "link_type": "package"})
-
-if sha256_url and "SHA256SUMS.txt" not in seen_links:
-    links.append({"name": "SHA256SUMS.txt", "url": sha256_url, "link_type": "package"})
 
 payload = {
     "name": f"Release v{version}",
@@ -425,6 +407,5 @@ else
 fi
 echo " Release URL : ${RELEASE_WEB_URL}"
 echo " Packages    : ${#PACKAGES_FOUND[@]} published to ${PACKAGE_REGISTRY_BASE}"
-echo " Checksums   : ${FULL_SHA256_URL}"
 echo " Tag Created : ${RELEASE_TAG} (ref: ${CI_COMMIT_SHA})"
 echo "=========================================================="

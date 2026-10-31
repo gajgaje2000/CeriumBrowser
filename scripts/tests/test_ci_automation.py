@@ -67,7 +67,7 @@ class TestReleaseCheckLogic(unittest.TestCase):
 class TestPublishReleasePayload(unittest.TestCase):
     """Tests the release payload generation from publish-release-direct.sh."""
 
-    def _generate_payload(self, version, arch, commit_sha, apk_url, sha256=None, apk_name=None, chromium_version=None, sha256_url=None):
+    def _generate_payload(self, version, arch, commit_sha, apk_url, sha256=None, apk_name=None, chromium_version=None):
         """Simulates the Python payload generator used by publish-release-direct.sh."""
         apk_name = apk_name or f"cerium-android-{arch}-v{version}.apk"
         chromium_part = f" and Chromium v{chromium_version}" if chromium_version else ""
@@ -96,12 +96,6 @@ class TestPublishReleasePayload(unittest.TestCase):
                 "link_type": "package",
             }
         ]
-        if sha256_url:
-            links.append({
-                "name": "SHA256SUMS.txt",
-                "url": sha256_url,
-                "link_type": "package",
-            })
         payload = {
             "name": f"Release v{version}",
             "tag_name": f"v{version}",
@@ -138,16 +132,17 @@ class TestPublishReleasePayload(unittest.TestCase):
         link = payload["assets"]["links"][0]
         self.assertEqual(link["link_type"], "package")
 
-    def test_asset_links_with_sha256(self):
-        """When sha256_url is provided, links must include SHA256SUMS.txt package."""
+    def test_asset_links_no_sha256_txt_and_description_has_sha256(self):
+        """Release assets must not include SHA256SUMS.txt, and description must contain the SHA256 hash."""
         payload = self._generate_payload(
             "1.96.60", "arm64", "abc", "http://x/apk",
-            sha256="deadbeef", sha256_url="http://x/sha256"
+            sha256="deadbeef"
         )
-        self.assertEqual(len(payload["assets"]["links"]), 2)
-        self.assertEqual(payload["assets"]["links"][1]["name"], "SHA256SUMS.txt")
-        self.assertEqual(payload["assets"]["links"][1]["url"], "http://x/sha256")
-        self.assertEqual(payload["assets"]["links"][1]["link_type"], "package")
+        self.assertEqual(len(payload["assets"]["links"]), 1)
+        self.assertEqual(payload["assets"]["links"][0]["name"], "cerium-android-arm64-v1.96.60.apk")
+        link_names = [l["name"] for l in payload["assets"]["links"]]
+        self.assertNotIn("SHA256SUMS.txt", link_names)
+        self.assertIn("- **SHA256**: `deadbeef`", payload["description"])
 
     def test_no_hardcoded_versions(self):
         """Payload fields must use the dynamic version, not hardcoded values."""
