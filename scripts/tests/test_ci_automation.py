@@ -411,6 +411,25 @@ class TestCIScriptSyntax(unittest.TestCase):
                     except OSError:
                         pass
 
+    def test_publish_release_github_dry_run(self):
+        """publish-release-direct.sh --dry-run must simulate GitHub release creation and asset uploads for gajgaje2000/CeriumBrowser."""
+        env = os.environ.copy()
+        env.update({
+            "DYNAMIC_BRAVE_VERSION": "1.96.61",
+            "TARGET_ARCH": "all",
+            "CI_COMMIT_BRANCH": "release",
+            "COMPILE_TARGET": "all",
+        })
+        res = subprocess.run(
+            ["bash", os.path.join(self.REPO_ROOT, "scripts/ci/publish-release-direct.sh"), "--dry-run"],
+            capture_output=True, text=True, env=env
+        )
+        self.assertEqual(res.returncode, 0, f"publish-release dry-run failed: {res.stderr}")
+        self.assertIn("--- [DRY-RUN] Step 3: Create GitHub Release in gajgaje2000/CeriumBrowser ---", res.stdout)
+        self.assertIn("Create GitHub Release for v1.96.61 -> https://github.com/gajgaje2000/CeriumBrowser/releases/tag/v1.96.61", res.stdout)
+        self.assertIn("[DRY-RUN] Upload GitHub Asset -> Cerium-1.96.61-arm64.apk", res.stdout)
+        self.assertIn("GitHub URL : https://github.com/gajgaje2000/CeriumBrowser/releases/tag/v1.96.61", res.stdout)
+
     def test_apply_patches_syntax(self):
         self._check_bash_syntax('scripts/core/apply-patches.sh')
 

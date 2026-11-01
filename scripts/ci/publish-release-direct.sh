@@ -389,12 +389,144 @@ else
   else
     echo "ERROR: Failed to create release (HTTP ${HTTP_CODE}):" >&2
     cat "${TMP_RESPONSE}" >&2
+    rm -f "${TMP_RESPONSE}"
     exit 1
   fi
+  rm -f "${TMP_RESPONSE}"
 fi
 
 # ------------------------------------------------------------------------------
-# 8. Print Release URL on Success
+# 8. Step 3: Create GitHub Release (if github_access is provided)
+# ------------------------------------------------------------------------------
+GITHUB_TOKEN="${github_access:-${GITHUB_ACCESS:-${GITHUB_TOKEN:-}}}"
+GITHUB_REPO="${GITHUB_REPO:-gajgaje2000/CeriumBrowser}"
+
+if [[ "${DRY_RUN}" == "true" ]]; then
+  echo ""
+  echo "--- [DRY-RUN] Step 3: Create GitHub Release in ${GITHUB_REPO} ---"
+  echo "Simulated 20s tag synchronization delay."
+  echo "[DRY-RUN] Create GitHub Release for ${RELEASE_TAG} -> https://github.com/${GITHUB_REPO}/releases/tag/${RELEASE_TAG}"
+  for pkg in "${PACKAGES_FOUND[@]}"; do
+    echo "  [DRY-RUN] Upload GitHub Asset -> $(basename "$pkg")"
+  done
+elif [[ -n "${GITHUB_TOKEN}" ]]; then
+  echo ""
+  echo "--- Step 3: Creating GitHub Release in ${GITHUB_REPO} ---"
+  echo "Waiting 20 seconds for tag mirror synchronization to GitHub..."
+  sleep 20
+
+  GH_API="https://api.github.com/repos/${GITHUB_REPO}"
+  GH_HEADERS=(
+    --header "Authorization: Bearer ${GITHUB_TOKEN}"
+    --header "Accept: application/vnd.github+json"
+    --header "X-GitHub-Api-Version: 2022-11-28"
+  )
+
+  TMP_GH="$(mktemp /tmp/github-release-XXXXXX.json)"
+  HTTP_CODE="$(curl --silent --show-error --output "${TMP_GH}" --write-out "%{http_code}" \
+    "${GH_HEADERS[@]}" \
+    "${GH_API}/releases/tags/${RELEASE_TAG}")"
+
+  GH_RELEASE_ID=""
+  if [[ "${HTTP_CODE}" == "200" ]]; then
+    echo "GitHub Release for ${RELEASE_TAG} already exists. Updating release..."
+    GH_RELEASE_ID="$(python3 -c "import json, sys; print(json.load(sys.stdin).get('id', ''))" < "${TMP_GH}")"
+    GH_PATCH_PAYLOAD="$(python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+print(json.dumps({
+    'name': data['name'],
+    'body': data['description'],
+    'draft': False,
+    'prerelease': False
+}))
+" <<< "${RELEASE_PAYLOAD}")"
+    curl --fail-with-body --silent --show-error \
+      "${GH_HEADERS[@]}" \
+      --header "Content-Type: application/json" \
+      --request PATCH \
+      "${GH_API}/releases/${GH_RELEASE_ID}" \
+      --data "${GH_PATCH_PAYLOAD}" >/dev/null
+  elif [[ "${HTTP_CODE}" == "404" ]]; then
+    echo "Creating new GitHub Release for ${RELEASE_TAG}..."
+    GH_POST_PAYLOAD="$(python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+print(json.dumps({
+    'tag_name': data['tag_name'],
+    'name': data['name'],
+    'body': data['description'],
+    'draft': False,
+    'prerelease': False
+}))
+" <<< "${RELEASE_PAYLOAD}")"
+    HTTP_CODE="$(curl --silent --show-error --output "${TMP_GH}" --write-out "%{http_code}" \
+      "${GH_HEADERS[@]}" \
+      --header "Content-Type: application/json" \
+      --request POST \
+      "${GH_API}/releases" \
+      --data "${GH_POST_PAYLOAD}")"
+    if [[ "${HTTP_CODE}" != "201" && "${HTTP_CODE}" != "200" ]]; then
+      echo "ERROR: Failed to create GitHub Release (HTTP ${HTTP_CODE}):" >&2
+      cat "${TMP_GH}" >&2
+      rm -f "${TMP_GH}"
+      exit 1
+    fi
+    GH_RELEASE_ID="$(python3 -c "import json, sys; print(json.load(sys.stdin).get('id', ''))" < "${TMP_GH}")"
+  else
+    echo "ERROR: Unexpected HTTP status checking GitHub Release (HTTP ${HTTP_CODE}):" >&2
+    cat "${TMP_GH}" >&2
+    rm -f "${TMP_GH}"
+    exit 1
+  fi
+  rm -f "${TMP_GH}"
+
+  if [[ -n "${GH_RELEASE_ID}" ]]; then
+    TMP_ASSETS="$(mktemp /tmp/github-assets-XXXXXX.json)"
+    curl --silent --show-error "${GH_HEADERS[@]}" "${GH_API}/releases/${GH_RELEASE_ID}/assets" -o "${TMP_ASSETS}" || true
+
+    for pkg in "${PACKAGES_FOUND[@]}"; do
+      bname="$(basename "$pkg")"
+      EXISTING_ASSET_ID="$(python3 -c "
+import json, sys
+try:
+    assets = json.load(sys.stdin)
+    if isinstance(assets, list):
+        match = next((a['id'] for a in assets if isinstance(a, dict) and a.get('name') == sys.argv[1]), '')
+        print(match)
+    else:
+        print('')
+except Exception:
+    print('')
+" "${bname}" < "${TMP_ASSETS}")"
+
+      if [[ -n "${EXISTING_ASSET_ID}" ]]; then
+        echo "Asset ${bname} already exists on GitHub (ID: ${EXISTING_ASSET_ID}). Replacing..."
+        curl --fail-with-body --silent --show-error \
+          "${GH_HEADERS[@]}" \
+          --request DELETE \
+          "${GH_API}/releases/assets/${EXISTING_ASSET_ID}" >/dev/null
+      fi
+
+      echo "Uploading ${bname} to GitHub Release..."
+      curl --fail-with-body --silent --show-error \
+        "${GH_HEADERS[@]}" \
+        --header "Content-Type: application/octet-stream" \
+        --request POST \
+        --data-binary "@${pkg}" \
+        "https://uploads.github.com/repos/${GITHUB_REPO}/releases/${GH_RELEASE_ID}/assets?name=${bname}" >/dev/null
+      echo "Uploaded GitHub asset: ${bname}"
+    done
+    rm -f "${TMP_ASSETS}"
+    echo "GitHub Release successfully published: https://github.com/${GITHUB_REPO}/releases/tag/${RELEASE_TAG}"
+  fi
+else
+  echo ""
+  echo "Notice: github_access token not set; skipping GitHub release publication."
+fi
+
+# ------------------------------------------------------------------------------
+# 9. Print Release URL on Success
 # ------------------------------------------------------------------------------
 RELEASE_WEB_URL="${CI_PROJECT_URL%/}/-/releases/${RELEASE_TAG}"
 
@@ -405,7 +537,10 @@ if [[ "${DRY_RUN}" == "true" ]]; then
 else
   echo " Release published successfully!"
 fi
-echo " Release URL : ${RELEASE_WEB_URL}"
-echo " Packages    : ${#PACKAGES_FOUND[@]} published to ${PACKAGE_REGISTRY_BASE}"
-echo " Tag Created : ${RELEASE_TAG} (ref: ${CI_COMMIT_SHA})"
+echo " GitLab URL : ${RELEASE_WEB_URL}"
+if [[ -n "${GITHUB_TOKEN}" || "${DRY_RUN}" == "true" ]]; then
+  echo " GitHub URL : https://github.com/${GITHUB_REPO}/releases/tag/${RELEASE_TAG}"
+fi
+echo " Packages   : ${#PACKAGES_FOUND[@]} published to ${PACKAGE_REGISTRY_BASE}"
+echo " Tag Created: ${RELEASE_TAG} (ref: ${CI_COMMIT_SHA})"
 echo "=========================================================="
