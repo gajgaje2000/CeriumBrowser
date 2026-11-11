@@ -63,7 +63,7 @@ Contributing to Cerium Browser
          # or: git checkout -b fix/your-bug-fix main
 
     4. Verify prerequisites:
-         - Python >= 3.10
+         - Python >= 3.10 (and `pip install -r requirements-dev.txt`)
          - Node.js >= 24.16.0 & pnpm >= 11.11.0
          - JDK >= 17 & Android SDK/NDK (for Android builds)
 
@@ -108,17 +108,18 @@ Contributing to Cerium Browser
     Before submitting a Merge Request:
 
     1. Run the local master verification suite:
-         ./scripts/android/verify-all.sh
+         ./scripts/core/verify-all.sh
 
-       All 5 verification steps must pass:
+       All 6 verification steps must pass:
          - Step 1: Manifest & upstream metadata validation
          - Step 2: Mutator script syntax & unit test verification
-         - Step 3: Patch set verification against upstream brave-core
-         - Step 4: Branding & asset suite verification
-         - Step 5: Android build orchestration dry-run
+         - Step 3: CI automation script verification
+         - Step 4: Patch set verification against upstream brave-core
+         - Step 5: Branding & asset suite verification
+         - Step 6: Multi-platform build orchestration dry-run
 
-    2. Run the test suite:
-         python3 -m unittest discover -s scripts/tests -v
+    2. Run the unit test suite directly:
+         python3 -m pytest scripts/tests/ -v
 
     3. Ensure Git commit authorship:
          Set your Git identity:

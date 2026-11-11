@@ -39,7 +39,7 @@ Modifications to `brave-core` use a **hybrid approach** to balance simplicity wi
 
 1. **Git Patches (`patches/`) for standard modifications**:
    - Use standard unified diff (`.patch`) files for straightforward edits like removing XML preference blocks, changing simple C++ constants, or modifying self-contained UI layouts.
-   - Example: `patches/android/0001-cerium-branding.patch`.
+   - Example: `patches/android/cerium-branding.patch`.
    - **Important**: Avoid using `.patch` files for highly dynamic code, such as GN build arrays (e.g. `deps = [...]`), which change constantly in upstream Chromium/Brave and will break patch application.
 
 2. **Programmatic Python Mutators (`scripts/`) for complex/dynamic changes**:
@@ -62,6 +62,12 @@ Modifications to `brave-core` use a **hybrid approach** to balance simplicity wi
 - **Why**: Agents frequently add excessive checks and boilerplate that the codebase does not need. In a downstream distribution tracking fast-moving upstream releases, superfluous code adds maintenance debt, pollutes the repository, and creates unnecessary breakages across upstream version bumps (such as Chromium Clang `-Werror` unused variable/parameter failures).
 - **Surgical & Structured**: Focus directly on the root cause. Every line added must serve a verified, essential purpose. Keep code as minimalist, cleanly structured, and maintainable as possible.
 
+### CRITICAL SUB-RULE: Zero Redundancy & Shared Build Orchestration
+- **Shared Platform Build Routines**: Do NOT duplicate build orchestration routines (manifest reading, git compatibility wrappers, depot_tools bootstrapping, host C compiler detection, ephemeral source checkout, watchdog timers, or artifact compression) inside individual platform build scripts (`scripts/platforms/*/build.sh`).
+- **Use `scripts/core/build-common.sh`**: All cross-platform build orchestration helpers must be implemented in and sourced from `scripts/core/build-common.sh`.
+- **Toolchain Manager Centralization**: Platform toolchain discovery, candidate prioritization, archive integrity verification, download, and environment generation must be handled inside dedicated toolchain modules (e.g. `scripts/core/setup-win-toolchain.py`) and communicate via structured environment files (`toolchain.env`), rather than ad-hoc inline Python snippets in shell scripts.
+- **Standalone Templates for Large Source Injections**: When a mutator replaces or injects non-trivial source code (>50 lines of C++, Java, or XML), store the code in a dedicated template file under a `templates/` subdirectory (e.g. `scripts/mutators/platforms/windows/templates/version_updater_win.cc`) rather than multi-hundred-line Python string literals.
+
 ---
 
 ## 4. Architectural Reuse: No Parallel Engines
@@ -72,7 +78,7 @@ Modifications to `brave-core` use a **hybrid approach** to balance simplicity wi
 - Modifications must remain asynchronous, non-blocking to the main browser thread, and preserve native Blink/V8 performance characteristics.
 
 ### Component Updates & Shields Protection
-- **Custom Updater Endpoint**: Cerium routes component updates through our secure GitLab Pages static endpoint (`https://ceriumbrowser.gitlab.io/cerium-updater/components`) via `patches/common/0002-custom-updater-endpoint.patch`.
+- **Custom Updater Endpoint**: Cerium routes component updates through our secure GitLab Pages static endpoint (`https://ceriumbrowser.gitlab.io/cerium-updater/components`) via `patches/common/custom-updater-endpoint.patch`.
 - **Default Aggressive Blocking**: Cerium defaults to Aggressive ad and tracker blocking out-of-the-box (`/*default_value=*/ControlType::BLOCK>;` in `brave_shields_settings_values.h`) and enables `kBraveAdblockDefault1pBlocking` by default via `scripts/mutators/common/shields.py`.
 - **Key Verification & Initialization**: Enforces publisher key verification (`kCeriumPublisherKeyHash`), batches component requests, appends `disable-pings`, and initializes `ad_block_service()` on demand with full profile integration to ensure race-free browser startup.
 
@@ -105,9 +111,9 @@ Cerium strips all unneeded promotional, cryptocurrency, and auxiliary subsystems
   - Skipped promo registry reading in `mini_installer.cc`.
 - **Enforced via Native Policies**:
   To avoid constant build breakages caused by upstream dependency mismatches, Cerium does *not* use compile-time GN arguments (`enable_brave_wallet = false`) to strip code. Instead, we compile the modules but strictly lock them down at runtime:
-  - **Native Brave Origin Policy Enforcement**: Bypassing the paywall in `patches/common/0001-brave-origin-paywall-bypass.patch` unlocks `IsBraveOriginPurchased() == true`, which natively triggers `LoadBraveOriginPolicies(bundle)` to enforce IPFS, Tor, Playlist, Email Aliases, and Psst lockdown.
-  - **Explicit Enterprise Policies (`patches/common/debloat/0004-enforce-enterprise-policies.patch`)**: Enforces runtime lockout for `BraveWalletDisabled`, `BraveVPNDisabled`, `BraveAIChatEnabled`, `BraveNewsDisabled`, `BraveRewardsDisabled`, `BraveSearchResultAdsEnabled`, `BraveTalkDisabled`, `BraveStatsPingEnabled`, `BraveWebDiscoveryEnabled`, `BraveP3AEnabled`, `BraveWaybackMachineEnabled`, and `BraveLocalAIEnabled`.
-  - Debloat Patches: `patches/common/debloat/` (0001, 0002, 0004) and `patches/android/debloat/` (0003, 0005, 0006) disable promotional flags, unlock backend policy state, remove rating prompts, disable Play in-app updates, and enforce mandatory privacy policies so hidden features cannot be reached or leak data.
+  - **Native Brave Origin Policy Enforcement**: Bypassing the paywall in `patches/desktop/brave-origin-paywall-bypass.patch` unlocks `IsBraveOriginPurchased() == true`, which natively triggers `LoadBraveOriginPolicies(bundle)` to enforce IPFS, Tor, Playlist, Email Aliases, and Psst lockdown.
+  - **Explicit Enterprise Policies (`patches/common/enforce-enterprise-policies.patch`)**: Enforces runtime lockout for `BraveWalletDisabled`, `BraveVPNDisabled`, `BraveAIChatEnabled`, `BraveNewsDisabled`, `BraveRewardsDisabled`, `BraveSearchResultAdsEnabled`, `BraveTalkDisabled`, `BraveStatsPingEnabled`, `BraveWebDiscoveryEnabled`, `BraveP3AEnabled`, `BraveWaybackMachineEnabled`, and `BraveLocalAIEnabled`.
+  - Platform Patches: `patches/common/` and `patches/android/` disable promotional flags, unlock backend policy state, remove rating prompts, disable Play in-app updates, and enforce mandatory privacy policies so hidden features cannot be reached or leak data.
 
 ---
 
@@ -116,11 +122,10 @@ Cerium strips all unneeded promotional, cryptocurrency, and auxiliary subsystems
 ### 1. The 3-Hour SaaS Runner Limit & Pipeline Stage Separation
 Chromium + Brave compilation is massive: over 43,000 compilation steps, requiring 1.5 to 3.5 hours on 32-core runners. GitLab CI SaaS runners (`saas-linux-2xlarge-amd64`) enforce a strict job timeout. Running a cold build from checkout to APK/distribution in a single job frequently times out.
 
-To guarantee that no runner exceeds the 3-hour limit, Cerium splits compilation into a strictly structured 4-stage pipeline:
+To optimize build speed and streamline orchestration, Cerium uses a high-performance 3-stage pipeline backed by an in-runner local NativeLink Content Addressable Storage (CAS) daemon:
 1. **Stage 1: `prepare_source`**: Lightweight stage. Resolves upstream versions dynamically, fetches exact `brave-core`, executes all patches/mutators/branding, and uploads the Tier 1 Source Cache.
-2. **Stage 2: `cache_prep` (`prepare_android_cache` & `prepare_windows_cache`)**: Pulls the pre-patched source cache, syncs Chromium for the target OS, compiles heavy common sub-targets (`v8` and `blink`), and uploads the Tier 2 Compiler Cache to the Package Registry.
-3. **Stage 3: `build` (`build_android` & `build_windows`)**: Pulls the pre-patched source cache, restores the Tier 2 warm compiler cache from the Package Registry, completes the remaining targets incrementally, and packages official distributions (APK/AAB/ZIP).
-4. **Stage 4: `publish` (`publish_release`)**: Gathers all multi-platform binary packages and publishes an official GitLab Release with checksums.
+2. **Stage 2: `build` (`build_android` & `build_windows`)**: Pulls the pre-patched source cache, starts an in-runner NativeLink daemon on `127.0.0.1:50051`, restores the rolling CAS cache from the Package Registry with immediate disk cleanup, compiles incrementally with Siso over REAPI at 0ms latency, packages official distributions (APK/AAB/ZIP), and uploads the updated rolling CAS cache.
+3. **Stage 3: `publish` (`publish_release`)**: Gathers all multi-platform binary packages and publishes an official GitLab Release with checksums.
 
 ---
 
@@ -140,16 +145,15 @@ To guarantee that no runner exceeds the 3-hour limit, Cerium splits compilation 
 
 - **CRITICAL RULE FOR AGENTS**: Downstream build runners MUST NEVER re-patch, re-brand, or re-run mutators on `brave-core`. `brave-core` is guaranteed to be completely prepared by Stage 1.
 
-#### Tier 2: Compiler Object Cache (`out/Release/`) via GitLab Generic Package Registry
-- **Why We Cannot Use GitLab Runner `cache:` for Compiler Output**:
-  - **No Dotenv Variable Expansion**: In dynamic version mode, `DYNAMIC_BRAVE_VERSION` is computed at runtime in Stage 1 and exported as a dotenv artifact. GitLab CI evaluates `cache:key` **prior to job execution**, meaning dotenv variables are NOT expanded. A key like `cerium-cache-${DYNAMIC_BRAVE_VERSION}` evaluates to `cerium-cache-`, causing severe cross-version cache poisoning!
-  - **Size and Timeout Bottlenecks**: GitLab runner cache creates a monolithic `.zip` archive on the runner and uploads it to GitLab object storage. For 5–10 GB compiler trees, zip compression and decompression take 15–20 minutes and often fail or time out.
-- **The Solution: Distributed Generic Package Registry (`upload-cache.sh` & `download-cache.sh`)**:
-  - Compresses the `out/Release` directory, splitting into 4.5 GB chunks (`chunk.tar.gz.*`) with SHA256 verification (`checksums.sha256`).
-  - Uses GitLab's official Package Registry API authenticated via `CI_JOB_TOKEN`:
-    `PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cerium-cache/${CACHE_VERSION}"`
-    where `CACHE_VERSION="${DYNAMIC_BRAVE_VERSION}-${TARGET_ARCH}"` (or `${DYNAMIC_BRAVE_VERSION}-win-${TARGET_ARCH}`).
-  - If no package exists (e.g. local builds), it logs `Starting cold build` and exits 0 cleanly.
+#### Tier 2: In-Runner NativeLink CAS & Action Cache via GitLab Generic Package Registry
+- **Why In-Runner NativeLink Local Daemon**:
+  - **Local Loopback Speed (0ms latency)**: Siso communicates natively via REAPI (`SISO_REAPI_ADDRESS="127.0.0.1:50051"`, `use_remoteexec = true`, `use_siso = true`, `RBE_service_no_security=true`) with an in-runner NativeLink daemon backed by a local filesystem store (`/tmp/nativelink/cas` and `/tmp/nativelink/ac`).
+  - **Immediate Disk Cleanup for 200 GB Runner**: When downloading cache chunks from GitLab Package Registry, `download-cache.sh` extracts them into `/tmp/nativelink` and immediately deletes the downloaded chunk files (`rm -f chunk.tar.gz.*`) so that the runner's 200 GB disk is never exhausted by holding both compressed archives and extracted CAS files simultaneously.
+  - **Rolling Package Registry Cache**: Uses GitLab's official Package Registry API:
+    `PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cerium-cas/${CACHE_VERSION}"`
+    where `CACHE_VERSION="latest-${TARGET_ARCH}"` (or `latest-win-${TARGET_ARCH}`).
+  - When the build finishes, NativeLink is terminated, the CAS and AC stores are compressed and split into 4000M chunks (`split -b 4000M`), uploaded to update `cerium-cas/${CACHE_VERSION}`, and each chunk is deleted immediately upon upload.
+  - If no package exists (e.g. cold builds), `download-cache.sh` logs `Starting cold build` and exits 0 cleanly.
 
 ---
 
@@ -162,12 +166,12 @@ To guarantee that no runner exceeds the 3-hour limit, Cerium splits compilation 
 
 ---
 
-### 4. Siso vs. Ninja Cache State Files (`.siso_deps` vs. `.ninja_deps`)
-- Cerium enables Siso (`use_siso = true` in `args.gn`) as its primary build executor.
-- Siso uses its own HashFS and dependency database (`.siso_deps` and `.siso_fs_state`) along with `.ninja_log` to track target dependencies and command hashes (`cmdhash`).
-- **Siso never writes or uses Ninja's legacy `.ninja_deps` binary log.** Checking for `.ninja_deps` will produce false-positive warnings.
-- **Rule for Agents**: Never require or verify `.ninja_deps` in cache upload/download routines or validation scripts. The authoritative state files for Siso are `.siso_fs_state`, `.siso_deps`, and `.ninja_log`.
-- **Preventing Manifest Regeneration**: `download-cache.sh` touches `build.ninja.d` (along with `build.ninja`, `build.ninja.stamp`, and `args.gn`) to the current time upon restore, ensuring all manifest files are newer than source `.gn`/`.gni` files synced by `gclient sync`. Cache restore is invoked inside platform build scripts (`scripts/platforms/{android,windows}/build.sh`) at Step 9, **after** `gclient sync` and `args.gn` generation, guaranteeing the timestamp hierarchy $T_{source} \le T_{manifest} < T_{outputs}$.
+### 4. Siso & NativeLink Daemon Integration
+- Cerium enables Siso (`use_siso = true` and `use_remoteexec = true` in `args.gn`) as its primary build executor.
+- Siso connects to NativeLink on `127.0.0.1:50051` via `SISO_REAPI_ADDRESS="127.0.0.1:50051"` and `SISO_REAPI_INSTANCE="main"`.
+- NativeLink manages CAS blobs and Action Cache entries in local filesystem storage with an automatic 40 GB eviction policy.
+- Local cache outputs and remote execution actions are matched by content digest (Merkle tree), eliminating timestamp-sensitive build graph invalidation across builds.
+- Daemon lifecycle is cleanly orchestrated via `scripts/core/nativelink.sh` (`install`, `start`, `stop`, `status`).
 
 ---
 
@@ -198,7 +202,7 @@ Before submitting changes or proposing pull requests:
      ```bash
      ./scripts/core/verify-all.sh
      ```
-     All 6 verification steps (manifest validation, mutator syntax & unit tests, CI automation scripts, patch retirement across trees, branding verification, orchestration dry-run) must pass cleanly.
+     All 6 verification steps (manifest validation, mutator syntax & unit tests, CI automation scripts, patch retirement across trees, branding verification, orchestration dry-run) must pass cleanly. Alternatively, run unit tests directly with `python3 -m pytest scripts/tests/ -v`. All new programmatic mutators must include dedicated unit tests in `scripts/tests/mutators/test_<name>.py` using pytest fixtures from `conftest.py`.
    - **Step B: ALWAYS validate using `prepare-source.sh`**:
      ```bash
      # Auto-resolve latest upstream stable release (default):
@@ -213,10 +217,14 @@ Before submitting changes or proposing pull requests:
    - The `release` branch is the production release branch (official releases, signed APK artifacts, and release tags). By default on push/merge, it compiles all target architectures (`COMPILE_TARGET="all"`) and publishes official releases. When triggered via the GitLab Web UI, it supports interactive `compile_target` selection (`all`, `android`, `windows`, `windows_x64`, `windows_arm64` with default `all`), enabling single-platform releases (e.g. Android only) as well as full multi-platform releases.
    - The `main` branch (and other topic branches) is for active testing, integration, and development. When triggered manually in the GitLab Web UI, it provides an interactive `compile_target` input dropdown (`all`, `android`, `windows`, `windows_x64`, `windows_arm64` with default `all`) allowing developers to choose target compilation on demand without publishing official releases. All merge requests and development topic branches must target `main`.
 9. **Enforce strict minimalism & fail-fast error handling**: Keep all edits minimal, surgical, and structured. Do not introduce speculative checks, multi-tier fallback globbing, unnecessary wrapper boilerplate, or defensive `if ctx.has_chromium_src():` guards around `replace_in_src()`. When a required file or anchor token is missing, fail fast with a clear error rather than attempting speculative recovery branches.
-10. **Packaging & Signing**: `scripts/platforms/{android,windows}/package.sh` is the authoritative multi-platform packaging and signing entry point. (`sign-apk.sh` exists solely as a compatibility forwarder).
+10. **Packaging & Signing**: `scripts/platforms/{android,windows}/package.sh` is the authoritative multi-platform packaging and signing entry point.
 11. **Toolchain Prerequisites**:
     - Windows cross-compilation on Linux runner containers requires `libfuse2` for `ciopfs` to mount the Visual Studio toolchain (`vs_files`).
     - Set `GCLIENT_SUPPRESS_GIT_VERSION_WARNING: "1"` across CI environments to suppress depot_tools git version alerts.
+12. **Zero Hardcoded Machine Paths**: Never hardcode developer machine paths (such as `/run/media/...` or `/home/...`). Always resolve paths dynamically via environment variables (`LOCAL_BRAVE_CORE_DIR`, `BRAVE_CORE_DIR`, `WORKSPACE_DIR`) with empty or repository-relative defaults.
+13. **CI YAML Standards & PyYAML Compatibility**: Do not use non-standard GitLab YAML tags (such as `!reference`) in CI YAML files (`.gitlab-ci.yml`, `.gitlab/ci/*.yml`), because validation suites (`test_ci_automation.py`) parse these files with standard PyYAML `yaml.safe_load_all()`. Use standard YAML templates (`extends`) or shared bash scripts instead.
+14. **Multi-Platform Neutral Manifests**: Upstream metadata and release manifests generated by `resolve-versions.py` must remain platform-neutral. Do not hardcode target platform or architecture in `upstream_data["gn_arguments"]["base"]`.
+15. **Deduplication & Component Reuse**: Always check `scripts/core/build-common.sh` before writing new build shell routines. Platform scripts in `scripts/platforms/` must focus strictly on platform-specific GN flags and build targets without reintroducing duplicate boilerplate.
 
 ---
 **Summary for Agents:**

@@ -2,6 +2,7 @@
 out/
 *.apk
 *.aab
+build-workspace
 build-workspace/
 build.env
 
@@ -24,3 +25,10 @@ __pycache__/
 *.jks
 *.keystore
 *.idsig
+
+# Toolchain scratch / cache
+.xwin-cache/
+
+# Local developer overrides
+local.env
+build.env.local

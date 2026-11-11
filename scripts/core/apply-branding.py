@@ -19,6 +19,9 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+
 BLOAT_KEYWORDS = (
     "LEO",
     "AI_CHAT",
@@ -36,6 +39,11 @@ BLOAT_KEYWORDS = (
 )
 
 AUTHORS_RE = re.compile(r"\b(?:Brave|Braving|Cerium)\s+(?:Authors|Contributors)\b")
+
+ORIGIN_RE = re.compile(
+    r"(?<![./_-])\b(?:Brave|Braving|Cerium)\s+Origin\b"
+    r"(?!://|\.[a-zA-Z])"
+)
 
 # Match standalone "Brave" or "Braving", excluding:
 # - URLs/domains/paths (preceded by ., /, _, - or followed by ://, .[a-zA-Z])
@@ -160,6 +168,7 @@ def replace_outside_ph_and_tags(block_str: str) -> str:
     parts = PH_OR_TAG_RE.split(block_str)
     for i in range(0, len(parts), 2):
         parts[i] = AUTHORS_RE.sub("Cerium Browser Team", parts[i])
+        parts[i] = ORIGIN_RE.sub("Cerium", parts[i])
         parts[i] = BRAVE_RE.sub("Cerium", parts[i])
     return "".join(parts)
 

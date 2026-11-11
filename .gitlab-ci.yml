@@ -22,7 +22,6 @@ spec:
 
 stages:
   - prepare
-  - cache_prep
   - build
   - publish
 
@@ -31,7 +30,14 @@ variables:
   BRAVE_VERSION: "$[[ inputs.brave_version ]]"
   FORCE_CACHE_REBUILD: "${FORCE_CACHE_REBUILD:-false}"
   COMPILE_TARGET: "$[[ inputs.compile_target ]]"
+  BUILD_TIMEOUT_SECONDS: "9600"
+  RUNNER_AFTER_SCRIPT_TIMEOUT: "15m"
+  SISO_PROJECT: "rbe-chromium-untrusted"
+  RBE_project: "rbe-chromium-untrusted"
+  RBE_instance: "projects/rbe-chromium-untrusted/instances/main"
+  AUTONINJA_SKIP_EXTERNAL_ACCOUNT_CHECK: "1"
   GCLIENT_SUPPRESS_GIT_VERSION_WARNING: "1"
+  BUILDER_IMAGE: "registry.gitlab.com/ceriumbrowser/cerium-browser/builder:latest"
 
 # Pipeline execution rules:
 # - release branch triggers on any push/merge to build and publish official release
@@ -42,10 +48,15 @@ workflow:
       when: always
     - if: '$CI_PIPELINE_SOURCE == "web"'
       when: always
+    - if: '$CI_COMMIT_BRANCH =~ /^feat\//'
+      variables:
+        COMPILE_TARGET: "windows_x64"
+      when: always
     - when: never
 
 # Modular includes with inputs propagation
 include:
+  - local: ".gitlab/ci/docker.yml"
   - local: ".gitlab/ci/common.yml"
     inputs:
       brave_version: "$[[ inputs.brave_version ]]"

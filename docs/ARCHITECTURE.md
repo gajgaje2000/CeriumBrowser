@@ -10,6 +10,17 @@ The repository is organized into distinct, decoupled subsystems with strict sepa
 
 ```
 Cerium Repository Structure
+├── configs/                        # [Declarative Configuration Center]
+│   ├── versions.env                # Pinned toolchain revisions (GN, depot_tools, NativeLink)
+│   └── gn/                         # Modular GN configurations (replaces inline bash heredocs)
+│       ├── common.gni              # Baseline release & optimization arguments
+│       ├── debloat.gni             # Debloated service keys & telemetry suppression
+│       ├── android.gni             # Android target arguments, ABIs, and package ID
+│       └── windows.gni             # Windows target arguments & toolchain settings
+│
+├── overlays/                       # [Universal Mirror Trees]
+│   └── brave/                      # Directly mirrors brave-core directory layout
+│
 ├── branding/                       # [Module 1] Brand Identity & Assets
 │   ├── logo.svg                    # Master vector identity
 │   ├── android/                    # Adaptive & themed vector drawables
@@ -19,27 +30,46 @@ Cerium Repository Structure
 │   └── brave-core-static/          # 156 density PNGs & 10 static SVGs for brave-core
 │
 ├── patches/                        # [Module 2 & 3] Standard Unified Patches
-│   └── android/
-│       ├── 0001-cerium-branding.patch            # Core branding & package ID
-│       ├── 0002-custom-updater-endpoint.patch    # Custom updater & telemetry suppression
-│       └── debloat/                              # Modular Enterprise Debloating
-│           ├── 0001-hide-brave-origin-flag.patch
-│           ├── 0002-unlock-brave-origin-backend.patch
-│           ├── 0003-unlock-brave-origin-android-prefs.patch
-│           └── 0004-enforce-enterprise-policies.patch
+│   ├── patches.yaml                # Declarative patch catalog (name, category, reason, effect)
+│   ├── common/                     # Cross-platform core C++ & shared BRANDING
+│   │   ├── cerium-branding.patch             # Core release BRANDING metadata
+│   │   ├── custom-updater-endpoint.patch     # Custom updater & telemetry suppression
+│   │   ├── enforce-enterprise-policies.patch # Mandatory enterprise policies
+│   │   ├── hide-brave-origin-flag.patch      # Hide origin feature flag
+│   │   └── unlock-brave-origin-backend.patch # Unlock backend policy state
+│   ├── desktop/                    # Desktop Views UI (Windows, macOS, Linux)
+│   │   └── brave-origin-paywall-bypass.patch # Bypass modal paywall view
+│   └── android/                    # Android Java & XML resources
+│       ├── cerium-branding.patch             # Channel constants & package ID
+│       ├── disable-play-in-app-update.patch  # Disable Play Store updates
+│       ├── remove-rate-brave.patch           # Remove rating dialogs & menu
+│       └── unlock-brave-origin-prefs.patch   # Android origin preferences
 │
 ├── scripts/                        # Operational Scripts & Mutators
+│   ├── build.sh                    # Unified developer build entrypoint (android | windows | all)
+│   ├── run-container.sh            # Local container runner (podman/docker in CI builder)
 │   ├── core/                       # Shared Cross-Platform Scripts
+│   │   ├── build-common.sh         # [Module 4] Shared cross-platform build orchestration library
+│   │   ├── generate-gn-args.py     # Declarative GN configuration renderer
+│   │   ├── apply-overlays.sh       # Universal recursive mirror overlay engine
+│   │   ├── create-patch.sh         # Git patch generation helper
+│   │   ├── setup-win-toolchain.py  # [Module 4] Hermetic Windows toolchain download & environment setup
 │   │   ├── prepare-source.sh       # Dynamic resolution, checkout, patch apply & check, mutators, pipeline cache tarball
-│   │   ├── apply-patches.sh        # Unified patch applier and idempotence checker (--check)
+│   │   ├── apply-patches.sh        # Unified patch applier with patches.yaml metadata support
 │   │   ├── apply-features.py       # [Module 2] Programmatic GN array mutator
 │   │   ├── apply-branding.py       # [Module 1] GRD/GRDP string & XTB translation mutator
 │   │   ├── apply-assets.sh         # [Module 1] Static asset overlay deployment
-│   │   ├── filter-build-log.py     # [Module 4] Real-time CI 4MB stream log filter
+│   │   ├── filter-build-log.py     # [Module 4] Real-time CI 4MB stream log filter & heartbeat
 │   │   ├── verify-branding.sh      # [Module 1] Standalone branding verification
 │   │   ├── verify-all.sh           # [Module 7] Master verification suite
 │   │   ├── download-cache.sh       # [Module 6] Generic Package Registry cache restore & Siso sync
 │   │   └── upload-cache.sh         # [Module 6] Generic Package Registry cache chunker & upload
+│   ├── mutators/                   # Programmatic Mutators Subsystem
+│   │   ├── common/                 # Shared cross-platform mutators
+│   │   └── platforms/              # Platform-specific mutators & templates
+│   │       ├── android/            # Android UI & toolbar mutators
+│   │       └── windows/            # Windows branding, installer & templates
+│   │           └── templates/      # Standalone C++ templates (version_updater_win.cc)
 │   ├── platforms/                  # Modular Platform Build Entry Points
 │   │   ├── android/                # Android build and packaging (build.sh, package.sh)
 │   │   └── windows/                # Windows build and packaging (build.sh, package.sh)
@@ -50,6 +80,8 @@ Cerium Repository Structure
 │       ├── test_manifest.py        # Manifest schema & package_id verification
 │       ├── test_branding.py        # Asset dimensions, XML syntax, AAPT2 string limits
 │       ├── test_mutators.py        # Python 3.11 syntax, mutator idempotence, patch checks
+│       ├── test_win_toolchain.py   # Windows toolchain candidates, SetEnv & environment tests
+│       ├── test_ci_automation.py   # CI shell scripts & contract validation
 │       └── test_cache_scripts.py   # Siso timestamp sync & script syntax tests
 │
 ├── metadata/                       # Upstream Revisions & Release Manifests
@@ -70,7 +102,7 @@ Cerium Repository Structure
 
 ### Module 2: Enterprise Policies & Radical Debloating
 - Rather than maintaining fragile GN build flags that break upstream compiler trees, Cerium compiles modules cleanly but disables them unconditionally via Enterprise Policies.
-- `patches/android/debloat/0004-enforce-enterprise-policies.patch` injects mandatory policies at browser start:
+- `patches/common/enforce-enterprise-policies.patch` injects mandatory policies at browser start:
   - `BraveWalletDisabled = true`
   - `BraveVPNDisabled = true`
   - `BraveAIChatEnabled = false`
@@ -88,8 +120,18 @@ Cerium Repository Structure
 - Verifies custom Cerium publisher key hashes (`kCeriumPublisherKeyHash`).
 - Batches update checks and appends `disable-pings` to component updater invocations.
 
-### Module 4: Release Build Orchestration
-- Platform build scripts (`scripts/platforms/android/build.sh`, `scripts/platforms/windows/build.sh`) configure hermetic, reproducible release arguments:
+### Module 4: Release Build Orchestration & Shared Core
+- **Shared Build Core (`scripts/core/build-common.sh`)**: Centralizes cross-platform orchestration functions to prevent copy-paste drift:
+  - Manifest property parsing (`extract_manifest_val`)
+  - Toolchain compatibility (`ensure_git_compatibility_shim`, `ensure_depot_tools`, `ensure_host_c_compiler`, `ensure_gn_binary`)
+  - Chromium checkout, `.gclient` generation, sync & patching (`fetch_chromium_git`, `init_clean_chromium_source`, `write_gclient_config`, `sync_and_patch_chromium`, `prepare_brave_branding_and_version`)
+  - GN debloating, Siso/REAPI config, compilation, & watchdog (`append_debloated_service_gn_args`, `configure_siso_environment`, `start_build_watchdog`, `stop_build_watchdog`, `run_siso_compilation`)
+  - Cross-container NativeLink & GitLab Package Registry helpers (`resolve_nativelink_dir`, `shared_upload_cas_cache`, `finalize_ci_cache_upload`, `resolve_gitlab_auth_header`, `resolve_cas_cache_version`, `download_chunks_parallel`, `gitlab_pkg_cleanup_version`, `gitlab_pkg_upload_file`)
+  - Build diagnostics and artifact packaging (`archive_build_artifacts`)
+- **Windows Toolchain Centralization (`scripts/core/setup-win-toolchain.py`)**:
+  - Encapsulates candidate hash resolution, archive checksumming, extraction, xwin layout generation, and SetEnv manifest generation.
+  - Outputs a sourced `toolchain.env` configuration consumed by `scripts/platforms/windows/build.sh`.
+- Platform build scripts (`scripts/platforms/android/build.sh`, `scripts/platforms/windows/build.sh`) focus strictly on target-specific GN flags and compilation:
   - `is_debug = false`, `is_official_build = true`, `is_java_debug = false`
   - `symbol_level = 0`, `blink_symbol_level = 0`, `v8_symbol_level = 0`
   - `dcheck_always_on = false`, `enable_java_asserts = false`
@@ -113,7 +155,7 @@ Cerium Repository Structure
 ### Module 7: Master Verification Suite
 - `scripts/core/verify-all.sh` orchestrates:
   1. Manifest & upstream metadata schema validation (`test_manifest.py`)
-  2. Python 3.11+ syntax compatibility & mutator unit tests (`test_mutators.py`, `test_cache_scripts.py`)
+  2. Python 3.11+ syntax compatibility, toolchain & mutator unit tests (`test_mutators.py`, `test_win_toolchain.py`, `test_ci_automation.py`, `test_cache_scripts.py`)
   3. Patch application validation against `brave-core`
   4. Visual branding and AAPT2 asset verification (`verify-branding.sh`, `test_branding.py`)
   5. Multi-platform build and packaging orchestration dry-runs

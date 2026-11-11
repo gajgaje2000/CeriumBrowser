@@ -1,0 +1,30 @@
+From: gajgaje2000 <gajgaje2000@gmail.com>
+Date: Fri, 5 Sep 2026 10:15:00 +0000
+Subject: [PATCH] [branding] Rebrand release app/theme/brave BRANDING to Cerium
+
+Updates release BRANDING under app/theme/brave to Cerium Browser Team,
+Cerium Browser, and Mac bundle ID org.cerium.browser.
+---
+diff --git a/app/theme/brave/BRANDING b/app/theme/brave/BRANDING
+index 7a81c45..c01e4a2 100644
+--- a/app/theme/brave/BRANDING
++++ b/app/theme/brave/BRANDING
+@@ -1,10 +1,10 @@
+-COMPANY_FULLNAME=Brave Software, Inc.
+-COMPANY_SHORTNAME=Brave Software
+-PRODUCT_FULLNAME=Brave Browser
+-PRODUCT_SHORTNAME=Brave
+-PRODUCT_INSTALLER_FULLNAME=Brave Installer
+-PRODUCT_INSTALLER_SHORTNAME=Brave Installer
+-COPYRIGHT=Copyright 2016 The Brave Authors. All rights reserved.
+-MAC_BUNDLE_ID=com.brave.Browser
++COMPANY_FULLNAME=Cerium Browser Team
++COMPANY_SHORTNAME=Cerium
++PRODUCT_FULLNAME=Cerium Browser
++PRODUCT_SHORTNAME=Cerium
++PRODUCT_INSTALLER_FULLNAME=Cerium Installer
++PRODUCT_INSTALLER_SHORTNAME=Cerium Installer
++COPYRIGHT=Copyright 2026 Cerium Browser Team. All rights reserved.
++MAC_BUNDLE_ID=org.cerium.browser
+ MAC_CREATOR_CODE=Cr24
+ MAC_TEAM_ID=KL8N8XSYF4

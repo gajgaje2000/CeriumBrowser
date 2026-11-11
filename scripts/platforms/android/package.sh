@@ -82,10 +82,10 @@ if [[ -d "${SRC_DIR}/third_party/jdk/current/bin" ]]; then
   export PATH="${SRC_DIR}/third_party/jdk/current/bin:${PATH}"
 fi
 
-# Resolve password from KEY_PASSWORD_ANDROID (supports direct value or File-type variable)
-RAW_PASS="${KEY_PASSWORD_ANDROID:-}"
+# Resolve password from KEY_PASSWORD_ANDROID or ANDROID_KEYSTORE_PASSWORD (supports direct value or File-type variable)
+RAW_PASS="${KEY_PASSWORD_ANDROID:-${ANDROID_KEYSTORE_PASSWORD:-}}"
 if [[ -z "${RAW_PASS}" ]]; then
-  echo "ERROR: KEY_PASSWORD_ANDROID is not set or empty." >&2
+  echo "ERROR: KEY_PASSWORD_ANDROID (or ANDROID_KEYSTORE_PASSWORD) is not set or empty." >&2
   echo "Configure KEY_PASSWORD_ANDROID in GitLab Settings -> CI/CD -> Variables." >&2
   exit 1
 fi
@@ -215,7 +215,7 @@ if [[ ${#TARGET_APKS[@]} -eq 0 ]]; then
       dest="${OUTPUT_APK_DIR}/$(basename "${apk}")"
       cp -f "${apk}" "${dest}"
       TARGET_APKS+=("${dest}")
-    done < <(find "${OUT_DIR}/apks" -maxdepth 1 \( -name "Cerium*.apk" -o -name "Braving*.apk" -o -name "Brave*.apk" -o -name "ChromePublic.apk" \) -type f -print0 | sort -z)
+    done < <(find "${OUT_DIR}/apks" -maxdepth 1 \( -name "ceriumbrowser*.apk" -o -name "Cerium*.apk" -o -name "Braving*.apk" -o -name "Brave*.apk" -o -name "ChromePublic.apk" \) -type f -print0 | sort -z)
   fi
 fi
 

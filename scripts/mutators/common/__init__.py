@@ -1,5 +1,5 @@
 """Common cross-platform mutator components."""
-from scripts.mutators.common import webui, branding_js, flags, user_agent, shields, devtools, brave_origin, ntp_ads
+from scripts.mutators.common import webui, branding_js, flags, user_agent, shields, devtools, brave_origin, ntp_ads, translate, sync
 
 ALL_COMMON_MUTATORS = [
     webui,
@@ -10,4 +10,6 @@ ALL_COMMON_MUTATORS = [
     devtools,
     brave_origin,
     ntp_ads,
+    translate,
+    sync,
 ]

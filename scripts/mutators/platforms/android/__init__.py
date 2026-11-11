@@ -8,6 +8,7 @@ from scripts.mutators.platforms.android import (
     expectations,
     toolbar,
     ntp,
+    sync,
 )
 
 ALL_ANDROID_MUTATORS = [
@@ -19,4 +20,5 @@ ALL_ANDROID_MUTATORS = [
     expectations,
     toolbar,
     ntp,
+    sync,
 ]

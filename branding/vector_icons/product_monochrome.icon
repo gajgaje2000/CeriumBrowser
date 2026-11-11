@@ -1,0 +1,9 @@
+CANVAS_DIMENSIONS, 24,
+MOVE_TO, 19.6f, 16.85f,
+ARC_TO, 8.91f, 8.91f, 0, 1, 1, 19.6f, 7.15f,
+ARC_TO, 1.71f, 1.71f, 0, 0, 1, 16.73f, 9.01f,
+ARC_TO, 5.48f, 5.48f, 0, 1, 0, 16.73f, 14.99f,
+ARC_TO, 1.71f, 1.71f, 0, 0, 1, 19.6f, 16.85f,
+CLOSE,
+NEW_PATH,
+CIRCLE, 19.32f, 12, 1.45f

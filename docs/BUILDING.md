@@ -14,7 +14,7 @@ This guide describes how to build Cerium Browser from source in a clean environm
 
 ### Software & Toolchains
 - `git` (2.35+)
-- `python3` (3.10+) and `python3-yaml`
+- `python3` (3.10+) and `python3-yaml` (install testing dependencies via `pip install -r requirements-dev.txt`)
 - `node` (>= 24.16.0) and `pnpm` (>= 11.11.0)
 - `openjdk-17-jdk`
 - `curl`, `patch`, `ninja-build`
@@ -26,7 +26,7 @@ This guide describes how to build Cerium Browser from source in a clean environm
 Set up a dedicated Chromium / Brave project directory:
 
 ```bash
-export WORKSPACE_DIR="/run/media/pc/D"
+export WORKSPACE_DIR="${HOME}/cerium-workspace"
 export CERIUM_DIR="${WORKSPACE_DIR}/Cerium"
 export BRAVING_DIR="${CERIUM_DIR}"
 export SRC_DIR="${WORKSPACE_DIR}/src"
@@ -61,58 +61,79 @@ What `prepare-source.sh` performs:
 
 ---
 
-## 4. Android Compilation (Phase 2)
+## 4. Building Cerium (Quick Start)
 
-Once the source is prepared, trigger the Android build:
+Cerium provides a unified build entry point for all platforms:
 
 ```bash
 cd "${CERIUM_DIR}"
-./scripts/platforms/android/build.sh --arch=arm64 --release
+
+# Build Android (arm64):
+./scripts/build.sh android
+
+# Build Windows (x64):
+./scripts/build.sh windows_x64
+
+# Build Windows (arm64):
+./scripts/build.sh windows_arm64
+
+# Build All Targets:
+./scripts/build.sh all
 ```
 
-### Build Arguments Configured by Cerium:
-```gn
-target_os = "android"
-target_cpu = "arm64"
-is_debug = false
-is_official_build = true
-is_java_debug = false
-symbol_level = 0
-blink_symbol_level = 0
-v8_symbol_level = 0
-enable_resource_allowlist_generation = true
-is_component_build = false
-disable_fieldtrial_testing_config = true
-chrome_public_manifest_package = "org.cerium.browser"
-android_channel = "stable"
-brave_channel = ""
-target_android_output_format = "aab"
-enable_android_secondary_abi = false
-skip_secondary_abi_for_cq = true
-dcheck_always_on = false
-enable_java_asserts = false
-exclude_unwind_tables = true
-use_siso = true
-disable_android_lint = true
+### Building in the Official CI Container (Podman / Docker)
+
+You can run identical builds inside the reproducible builder container locally with one command:
+
+```bash
+# Open interactive shell in builder container:
+./scripts/run-container.sh
+
+# Or run a build command directly:
+./scripts/run-container.sh ./scripts/build.sh android
 ```
 
-The resulting signed APK will be placed in:
+### Local Developer Overrides (`local.env`)
+
+To customize settings (e.g. Siso cache flags, debug options, compiler paths) without modifying tracked repository files, create a `local.env` at the repository root (ignored by git):
+
+```bash
+# Example local.env:
+export CERIUM_BUILD_TIMEOUT_DEFAULT="18000"
+export CERIUM_LOG_STEP_INTERVAL="5"
 ```
-${CERIUM_DIR}/out/apks/Cerium-<version>-arm64.apk
+
+### Creating Downstream Patches
+
+To export changes made to a working checkout into a clean `.patch` file:
+
+```bash
+./scripts/core/create-patch.sh build-workspace/src/brave common my-new-feature.patch
 ```
+After creating the patch, document it in `patches/patches.yaml`.
 
 ---
 
-## 5. Master Verification Suite
+## 5. Declarative Build Arguments (`configs/gn/`)
 
-Run all verification tiers:
+Build arguments are declared in modular `.gni` files under `configs/gn/` rather than hardcoded in shell scripts:
+- `configs/gn/common.gni`: Base optimization, symbols, official release settings.
+- `configs/gn/debloat.gni`: Overridden service keys, analytics, ads, and telemetry endpoints.
+- `configs/gn/android.gni`: Android architecture, channels, and package IDs.
+- `configs/gn/windows.gni`: Windows targets and toolchains.
+
+---
+
+## 6. Master Verification Suite
+
+Run all verification tiers (171 tests, syntax checks, patch validation, and build dry-runs):
 ```bash
 ./scripts/core/verify-all.sh
 ```
 
 ---
 
-## 6. Standalone APK Release Signing
+## 7. Standalone APK Release Signing
 
 To sign an existing or newly compiled APK using release credentials:
 ```bash

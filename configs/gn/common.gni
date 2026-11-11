@@ -1,0 +1,11 @@
+# Cerium Common Build Arguments
+# Shared baseline optimization and release flags across all platforms
+
+is_debug = false
+is_official_build = true
+is_component_build = false
+symbol_level = 0
+exclude_unwind_tables = true
+dcheck_always_on = false
+use_siso = true
+use_remoteexec = true

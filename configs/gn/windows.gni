@@ -1,0 +1,10 @@
+# Cerium Windows Target Arguments
+import("//brave/build/args/brave_defaults.gni")
+import("//brave/build/args/blink_platform_defaults.gni")
+import("//brave/build/args/brave_origin/branding_defaults.gni")
+import("//brave/build/args/desktop_defaults.gni")
+
+is_brave_origin_branded = true
+target_os = "win"
+target_cpu = "${TARGET_ARCH}"
+skip_signing = true

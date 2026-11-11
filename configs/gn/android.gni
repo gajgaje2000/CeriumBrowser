@@ -1,0 +1,23 @@
+# Cerium Android Target Arguments
+import("//brave/build/args/brave_defaults.gni")
+import("//brave/build/args/blink_platform_defaults.gni")
+import("//brave/build/args/branding_defaults.gni")
+import("//brave/build/args/android_defaults.gni")
+
+target_os = "android"
+target_cpu = "${TARGET_ARCH}"
+is_java_debug = false
+blink_symbol_level = 0
+v8_symbol_level = 0
+enable_resource_allowlist_generation = true
+disable_fieldtrial_testing_config = true
+chrome_public_manifest_package = "${PACKAGE_ID}"
+android_channel = "stable"
+brave_channel = ""
+target_android_output_format = "aab"
+chrome_version_name = "${BRAVE_VERSION}"
+android_override_version_name = "${BRAVE_VERSION}"
+android_default_version_name = "${BRAVE_VERSION}"
+enable_android_secondary_abi = false
+enable_java_asserts = false
+disable_android_lint = true

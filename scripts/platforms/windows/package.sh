@@ -83,29 +83,102 @@ if [[ ! -d "${OUT_DIR}" ]]; then
   echo "ERROR: Windows output directory not found: ${OUT_DIR}" >&2
   exit 1
 fi
-command -v zip >/dev/null 2>&1 || { echo "ERROR: zip is required." >&2; exit 1; }
 
-mkdir -p "${DEST_DIR}"
-ZIP_NAME="Cerium-Windows-${TARGET_ARCH}-v${VERSION}.zip"
-ZIP_PATH="${DEST_DIR}/${ZIP_NAME}"
-
-echo "Packaging standalone Windows distribution into ${ZIP_NAME}..."
-# Exclude intermediate build artifacts, object files, and build graph databases
-(cd "${OUT_DIR}" && zip -q -r -9 "${ZIP_PATH}" . \
-  -x "*.ninja*" "obj/*" "gen/*" ".siso*" "*.log" "build.ninja*" "args.gn")
-
-# Copy installer if generated
-if [[ -f "${OUT_DIR}/mini_installer.exe" ]]; then
-  INSTALLER_NAME="Cerium-Installer-${TARGET_ARCH}-v${VERSION}.exe"
-  echo "Found mini_installer.exe. Copying to ${DEST_DIR}/${INSTALLER_NAME}..."
-  cp "${OUT_DIR}/mini_installer.exe" "${DEST_DIR}/${INSTALLER_NAME}"
+SEVENZIP_CMD=""
+if command -v 7z >/dev/null 2>&1; then
+  SEVENZIP_CMD="7z"
+elif command -v 7za >/dev/null 2>&1; then
+  SEVENZIP_CMD="7za"
+else
+  echo "ERROR: 7z or 7za is required for Windows packaging." >&2
+  exit 1
 fi
 
-# Generate SHA256 checksums
+mkdir -p "${DEST_DIR}"
+INSTALLER_NAME="cerium_${TARGET_ARCH}.exe"
+ARCHIVE_NAME="cerium_${TARGET_ARCH}.7z"
+ARCHIVE_PATH="${DEST_DIR}/${ARCHIVE_NAME}"
+
+# Step 1: Copy 1-Click Installer (mini_installer)
+if [[ -f "${OUT_DIR}/mini_installer.exe" ]]; then
+  echo "Packaging 1-click Windows installer into ${INSTALLER_NAME}..."
+  cp -f "${OUT_DIR}/mini_installer.exe" "${DEST_DIR}/${INSTALLER_NAME}"
+  echo " [OK] Saved installer: ${DEST_DIR}/${INSTALLER_NAME} ($(du -h "${DEST_DIR}/${INSTALLER_NAME}" | cut -f1))"
+else
+  echo "WARNING: mini_installer.exe not found in ${OUT_DIR}. Skipping installer output."
+fi
+
+# Step 2: Assemble Clean Standalone Distribution (Ultra LZMA2 .7z)
+echo "Assembling standalone Windows distribution into ${ARCHIVE_NAME}..."
+STAGE_DIR=$(mktemp -d "${WORKSPACE_DIR}/cerium_win_stage_XXXXXX")
+cleanup_stage() {
+  rm -rf "${STAGE_DIR}"
+}
+trap cleanup_stage EXIT
+
+if [[ -f "${OUT_DIR}/chrome.7z" ]]; then
+  echo "Found official release archive chrome.7z. Staging runtime files..."
+  "${SEVENZIP_CMD}" x -y -o"${STAGE_DIR}" "${OUT_DIR}/chrome.7z" >/dev/null
+  if [[ -d "${STAGE_DIR}/Chrome-bin" ]]; then
+    # Move files from Chrome-bin to STAGE_DIR root
+    find "${STAGE_DIR}/Chrome-bin" -mindepth 1 -maxdepth 1 -exec mv -t "${STAGE_DIR}" {} +
+    rmdir "${STAGE_DIR}/Chrome-bin" 2>/dev/null || true
+  fi
+  if [[ -f "${OUT_DIR}/brave.exe" && ! -f "${STAGE_DIR}/brave.exe" ]]; then
+    cp -f "${OUT_DIR}/brave.exe" "${STAGE_DIR}/"
+  fi
+else
+  echo "Staging clean runtime distribution files from ${OUT_DIR}..."
+  # Executables
+  for exe in brave.exe chrome.exe chrome_proxy.exe notification_helper.exe; do
+    [[ -f "${OUT_DIR}/${exe}" ]] && cp -f "${OUT_DIR}/${exe}" "${STAGE_DIR}/"
+  done
+  # Dynamic Libraries (excluding static libs and symbols)
+  for dll in "${OUT_DIR}"/*.dll; do
+    [[ -f "$dll" ]] && cp -f "$dll" "${STAGE_DIR}/"
+  done
+  # Pak files
+  for pak in "${OUT_DIR}"/*.pak; do
+    [[ -f "$pak" ]] && cp -f "$pak" "${STAGE_DIR}/"
+  done
+  # Bin, Dat, and JSON data
+  for data_file in "${OUT_DIR}"/*.dat "${OUT_DIR}"/*.bin "${OUT_DIR}"/*.json; do
+    [[ -f "$data_file" ]] && cp -f "$data_file" "${STAGE_DIR}/"
+  done
+  # Resource subdirectories
+  for sub in locales MEIPreload VisualElements; do
+    [[ -d "${OUT_DIR}/${sub}" ]] && cp -r "${OUT_DIR}/${sub}" "${STAGE_DIR}/"
+  done
+fi
+
+# Provide cerium.exe as the primary launch executable alongside brave.exe and chrome.exe
+if [[ -f "${STAGE_DIR}/brave.exe" && ! -f "${STAGE_DIR}/cerium.exe" ]]; then
+  cp -f "${STAGE_DIR}/brave.exe" "${STAGE_DIR}/cerium.exe"
+elif [[ -f "${STAGE_DIR}/chrome.exe" && ! -f "${STAGE_DIR}/cerium.exe" ]]; then
+  cp -f "${STAGE_DIR}/chrome.exe" "${STAGE_DIR}/cerium.exe"
+fi
+
+echo "Compressing standalone distribution with ultra LZMA2 (-mx=9)..."
+rm -f "${ARCHIVE_PATH}"
+(cd "${STAGE_DIR}" && "${SEVENZIP_CMD}" a -t7z -mx=9 -ms=on "${ARCHIVE_PATH}" ./* >/dev/null)
+echo " [OK] Saved standalone archive: ${ARCHIVE_PATH} ($(du -h "${ARCHIVE_PATH}" | cut -f1))"
+
+# Step 3: Generate SHA256 Checksums
 echo "Generating SHA256SUMS.txt..."
-(cd "${DEST_DIR}" && sha256sum Cerium-* > SHA256SUMS.txt)
+(cd "${DEST_DIR}" && sha256sum cerium_* > SHA256SUMS.txt)
+
+# Step 4: Generate Update Manifest (release.json)
+if [[ -f "${REPO_ROOT}/scripts/core/generate-update-manifest.py" ]]; then
+  echo "Generating update manifest (release.json)..."
+  python3 "${REPO_ROOT}/scripts/core/generate-update-manifest.py" \
+    --package-dir="${DEST_DIR}" \
+    --version="${VERSION}" \
+    --arch="${TARGET_ARCH}" \
+    --output="${DEST_DIR}/release.json"
+fi
 
 echo "========================================================"
 echo " [SUCCESS] Windows packaging completed successfully."
 echo " Output artifacts in ${DEST_DIR}"
 echo "========================================================"
+

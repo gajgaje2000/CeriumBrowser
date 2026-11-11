@@ -22,21 +22,31 @@ class MutatorContext:
             return False
         return os.path.isdir(os.path.join(self.src_dir, "components")) or os.path.isdir(os.path.join(self.src_dir, "chrome"))
 
-    def replace_in_file(self, filepath: str, search, replacement: str, check_token: str = None, in_src: bool = False):
+    def _fail_or_warn(self, msg: str) -> bool:
+        """Exit when strict mode is active, otherwise log a warning."""
+        if self.strict:
+            print(f"ERROR: {msg}", file=sys.stderr)
+            sys.exit(1)
+        print(f"WARNING: {msg}")
+        return False
+
+    def _load_target_file(self, filepath: str, in_src: bool):
+        """Resolve filepath under src or brave root and return (abs_path, content), or (None, None) when skipped/missing."""
         if in_src and not self.has_chromium_src():
-            return False
+            print(f"Skipped (no Chromium src): {filepath}")
+            return None, None
         base = self.src_dir if in_src else self.brave_dir
         path = os.path.join(base, filepath)
         if not os.path.exists(path):
-            msg = f"{'MISSING SRC: ' if in_src else 'MISSING: '}{filepath}"
-            if self.strict:
-                print(f"ERROR: {msg}", file=sys.stderr)
-                sys.exit(1)
-            print(f"WARNING: {msg}")
-            return False
-
+            self._fail_or_warn(f"{'MISSING SRC: ' if in_src else 'MISSING: '}{filepath}")
+            return None, None
         with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
+            return path, f.read()
+
+    def replace_in_file(self, filepath: str, search, replacement: str, check_token: str = None, in_src: bool = False):
+        path, content = self._load_target_file(filepath, in_src)
+        if content is None:
+            return False
 
         if (check_token and check_token in content) or (isinstance(replacement, str) and replacement in content):
             print(f"Skipped {filepath} (already patched)")
@@ -44,43 +54,24 @@ class MutatorContext:
 
         if isinstance(search, str) and search in content:
             content = content.replace(search, replacement, 1)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
-            print(f"Patched {filepath}")
-            return True
         elif hasattr(search, "search") and search.search(content):
             content = search.sub(lambda _: replacement, content, count=1)
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
-            print(f"Patched {filepath}")
-            return True
         else:
             pattern_str = search.pattern if hasattr(search, "pattern") else search
-            msg = f"Search string not found in {filepath}: {pattern_str[:50]}..."
-            if self.strict:
-                print(f"ERROR: {msg}", file=sys.stderr)
-                sys.exit(1)
-            print(f"WARNING: {msg}")
-            return False
+            return self._fail_or_warn(f"Search string not found in {filepath}: {pattern_str[:50]}...")
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"Patched {filepath}")
+        return True
 
     def replace_in_src(self, filepath: str, search, replacement: str, check_token: str = None):
         return self.replace_in_file(filepath, search, replacement, check_token=check_token, in_src=True)
 
     def mutate_file(self, filepath: str, mutator_fn, in_src: bool = False):
-        if in_src and not self.has_chromium_src():
+        path, content = self._load_target_file(filepath, in_src)
+        if content is None:
             return False
-        base = self.src_dir if in_src else self.brave_dir
-        path = os.path.join(base, filepath)
-        if not os.path.exists(path):
-            msg = f"{'MISSING SRC: ' if in_src else 'MISSING: '}{filepath}"
-            if self.strict:
-                print(f"ERROR: {msg}", file=sys.stderr)
-                sys.exit(1)
-            print(f"WARNING: {msg}")
-            return False
-
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
 
         new_content, modified, found = mutator_fn(content)
         if modified:
@@ -88,16 +79,10 @@ class MutatorContext:
                 f.write(new_content)
             print(f"Patched {filepath}")
             return True
-        elif found:
+        if found:
             print(f"Skipped {filepath} (already patched)")
             return True
-        else:
-            msg = f"Search string not found in {filepath}"
-            if self.strict:
-                print(f"ERROR: {msg}", file=sys.stderr)
-                sys.exit(1)
-            print(f"WARNING: {msg}")
-            return False
+        return self._fail_or_warn(f"Search string not found in {filepath}")
 
     @staticmethod
     def find_matching_char(text: str, start_idx: int, open_char: str = "[", close_char: str = "]") -> int:

@@ -18,7 +18,8 @@ def _patch_nala_build_gn(content):
         '_source = "//brave/app/theme/brave/android/shields_drawables/${invoker.source}"'
         in content
     )
-    if m_templ and template_override and has_outline and has_carved and has_monochrome:
+    is_already_patched = has_outline and has_carved and has_monochrome and (template_override if m_templ else True)
+    if is_already_patched:
         return content, False, True
 
     modified = False
@@ -41,24 +42,8 @@ def _patch_nala_build_gn(content):
                 template_override = True
         if not template_override:
             return content, False, False
-    else:
-        # 2. Legacy copy(_name) syntax
-        if "ic_social_brave_outline_favicon_fullheight.xml" not in content:
-            pattern = re.compile(
-                r'(\s*sources\s*=\s*\[\s*"\$nala_base_path/drawable/\$\{override\.source\}"\s*\])',
-                re.DOTALL
-            )
-            repl = """
-    if (override.source == "ic_social_brave_outline_favicon_fullheight.xml") {
-      sources = [ "//brave/app/theme/brave/android/shields_drawables/${override.source}" ]
-    } else {
-      sources = [ "$nala_base_path/drawable/${override.source}" ]
-    }"""
-            content, count = pattern.subn(repl, content, count=1)
-            if count > 0:
-                modified = True
 
-    # 3. copy("nala_icons")
+    # 2. copy("nala_icons")
     if "ic_social_brave_carved_favicon_fullheight.xml" not in content:
         pattern = re.compile(
             r'(\s*sources\s*\+=\s*\[\s*["\']//brave/node_modules/@brave/leo/tokens/android/drawable/\$icon["\']\s*\])',
@@ -88,13 +73,7 @@ def _patch_nala_build_gn(content):
 
     if modified:
         return content, True, True
-    legacy_override = (
-        'if (override.source == "ic_social_brave_outline_favicon_fullheight.xml") {'
-        in content and
-        'sources = [ "//brave/app/theme/brave/android/shields_drawables/${override.source}" ]'
-        in content
-    )
-    return content, False, template_override or legacy_override
+    return content, False, is_already_patched
 
 
 def apply(ctx: MutatorContext):

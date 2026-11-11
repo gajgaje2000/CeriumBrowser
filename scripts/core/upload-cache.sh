@@ -1,82 +1,76 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Cerium — In-Runner CAS Cache Packaging and Upload
+# Packages rolling NativeLink CAS and Action Cache into 4000M chunks and uploads to GitLab Package Registry.
+# Immediately cleans up chunk archives to conserve runner disk space.
 
-# Inputs expected from environment:
-# BRAVE_VERSION, TARGET_ARCH, CI_API_V4_URL, CI_PROJECT_ID, CI_JOB_TOKEN, CI_PROJECT_DIR
+set -euo pipefail
 
 if [[ -z "${CI_API_V4_URL:-}" || -z "${CI_JOB_TOKEN:-}" || -z "${CI_PROJECT_ID:-}" ]]; then
   echo "GitLab CI API variables not set. Skipping cache upload."
   exit 0
 fi
 
-if [[ -z "${DYNAMIC_BRAVE_VERSION:-}" && -z "${BRAVE_VERSION:-}" ]]; then
-  echo "ERROR: Neither DYNAMIC_BRAVE_VERSION nor BRAVE_VERSION are set."
-  exit 1
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-TARGET_ARCH="${TARGET_ARCH:-arm64}"
-CACHE_VERSION="${CACHE_VERSION:-${DYNAMIC_BRAVE_VERSION:-${BRAVE_VERSION}}-${TARGET_ARCH}}"
-PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cerium-cache/${CACHE_VERSION}"
-OUT_DIR="${WORKSPACE_DIR:-${CI_PROJECT_DIR:-${REPO_ROOT}}/build-workspace}/src/out"
+# shellcheck source=scripts/core/build-common.sh
+source "${SCRIPT_DIR}/build-common.sh"
+
+CACHE_VERSION="$(resolve_cas_cache_version)"
+AUTH_HEADER="$(resolve_gitlab_auth_header)"
+PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cerium-cas/${CACHE_VERSION}"
+NATIVELINK_DIR="$(resolve_nativelink_dir)"
 
 echo "=========================================="
-echo " Packaging Chromium Cache for ${CACHE_VERSION}"
+echo " Packaging Cerium CAS Cache for ${CACHE_VERSION}"
+echo " Package URL: ${PKG_URL}"
+echo " Source Dir : ${NATIVELINK_DIR}"
 echo "=========================================="
 
-if [[ ! -d "${OUT_DIR}/Release" ]]; then
-  echo "Error: ${OUT_DIR}/Release does not exist."
-  exit 1
+# Ensure NativeLink daemon is terminated before packaging so all files are flushed
+if [[ -f "${REPO_ROOT}/scripts/core/nativelink.sh" ]]; then
+  bash "${REPO_ROOT}/scripts/core/nativelink.sh" stop 2>/dev/null || true
+else
+  pkill -f "nativelink.*nativelink.json" 2>/dev/null || true
 fi
 
-# Clean transient process locks before packaging
-rm -f "${OUT_DIR}/Release/.siso_lock"
-
-# Verify required Siso metadata and compilation artifacts
-# NOTE: .ninja_deps is NOT checked because Siso (use_siso=true) uses its own
-# .siso_deps/.siso_fs_state for dependency tracking and never writes .ninja_deps.
-echo "Checking Siso state files and compilation artifacts..."
-for f in ".siso_fs_state" ".siso_deps" ".ninja_log"; do
-  if [[ -f "${OUT_DIR}/Release/${f}" ]]; then
-    echo "  [FOUND] ${f} ($(stat -c%s "${OUT_DIR}/Release/${f}" 2>/dev/null || stat -f%z "${OUT_DIR}/Release/${f}" 2>/dev/null || echo "present") bytes)"
-  else
-    echo "  [WARNING] ${f} not found in ${OUT_DIR}/Release"
-  fi
-done
-
-if [[ -d "${OUT_DIR}/Release/.siso_local_cache" ]]; then
-  echo "  [FOUND] .siso_local_cache directory"
-fi
-if [[ -d "${OUT_DIR}/Release/obj" ]]; then
-  echo "  [FOUND] obj/ directory ($(find "${OUT_DIR}/Release/obj" -name "*.o" 2>/dev/null | wc -l) object files)"
-fi
-if [[ -d "${OUT_DIR}/Release/gen" ]]; then
-  echo "  [FOUND] gen/ directory"
+if [[ ! -d "${NATIVELINK_DIR}/cas" ]] || [[ -z "$(find "${NATIVELINK_DIR}/cas" -type f 2>/dev/null | head -n 1)" ]]; then
+  echo "Warning: No CAS cache objects found in ${NATIVELINK_DIR}/cas. Skipping cache upload."
+  exit 0
 fi
 
-UPLOAD_TMP_DIR=$(mktemp -d /tmp/cache-upload-XXXXXX)
+# Ensure ac directory exists before archiving
+mkdir -p "${NATIVELINK_DIR}/ac"
+
+UPLOAD_TMP_DIR=$(mktemp -d /tmp/cas-upload-XXXXXX)
 trap 'rm -rf "${UPLOAD_TMP_DIR}"' EXIT
 cd "${UPLOAD_TMP_DIR}"
 
-# We cache compiled objects, generated headers, Ninja graph, and Siso state.
-# We exclude final apks and temporary thinlto-cache to save package storage.
-echo "Compressing and splitting out/Release..."
-tar -czf - -C "${OUT_DIR}" \
-  --exclude="Release/apks" \
-  --exclude="Release/thinlto-cache" \
-  Release/ | split -b 4500M - chunk.tar.gz.
+echo "Compressing and splitting CAS and Action Cache into 4000M chunks (gzip -6)..."
+GZIP="-6" tar -czf - -C "${NATIVELINK_DIR}" \
+  --exclude="cas/tmp" \
+  --exclude="cas/tmp/*" \
+  --exclude="ac/tmp" \
+  --exclude="ac/tmp/*" \
+  cas ac | split -b 4000M - chunk.tar.gz.
 
 echo "Generating SHA256 checksums..."
 sha256sum chunk.tar.gz.* > checksums.sha256
 cat checksums.sha256
 
+# Clean up prior package version to prevent duplicate chunk files and registry bloat
+gitlab_pkg_cleanup_version "cerium-cas" "${CACHE_VERSION}" "${AUTH_HEADER}"
+
 for chunk in chunk.tar.gz.*; do
-  echo "Uploading ${chunk} (limit 5GB) to Generic Package Registry..."
-  curl --fail --silent --show-error --location --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file "${chunk}" "${PKG_URL}/${chunk}"
+  [[ -f "${chunk}" ]] || continue
+  echo "Uploading ${chunk} to Generic Package Registry (${PKG_URL}/${chunk})..."
+  gitlab_pkg_upload_file "${chunk}" "${PKG_URL}/${chunk}" "${AUTH_HEADER}"
+  # Immediate disk cleanup: delete each chunk file as soon as it is uploaded
+  rm -f "${chunk}"
 done
 
 echo "Uploading checksums.sha256..."
-curl --fail --silent --show-error --location --header "JOB-TOKEN: ${CI_JOB_TOKEN}" --upload-file checksums.sha256 "${PKG_URL}/checksums.sha256"
+gitlab_pkg_upload_file "checksums.sha256" "${PKG_URL}/checksums.sha256" "${AUTH_HEADER}"
+rm -f checksums.sha256
 
-echo "Cache upload complete!"
+touch "${NATIVELINK_DIR}/.cache_uploaded"
+echo "CAS cache upload complete!"

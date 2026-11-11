@@ -44,7 +44,7 @@ for arg in "$@"; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="${REPO_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 
 # ------------------------------------------------------------------------------
 # 2. Validate Environment Variables
@@ -139,7 +139,7 @@ declare -a PACKAGES_FOUND=()
 if [[ "${COMPILE_TARGET}" == "all" || "${COMPILE_TARGET}" == "android" ]]; then
   for d in "${REPO_ROOT}/out/apks" "${REPO_ROOT}/build-workspace/src/out/Release/apks"; do
     if [[ -d "$d" ]]; then
-      for f in "$d"/*.apk; do
+      for f in "$d"/cerium_*.apk "$d"/Cerium-*.apk; do
         [[ -f "$f" ]] && PACKAGES_FOUND+=("$f")
       done
     fi
@@ -150,7 +150,7 @@ fi
 if [[ "${COMPILE_TARGET}" == "all" || "${COMPILE_TARGET}" == windows* ]]; then
   for d in "${REPO_ROOT}/out/packages"; do
     if [[ -d "$d" ]]; then
-      for f in "$d"/Cerium-Windows-*.zip "$d"/Cerium-Installer-*.exe "$d"/Braving-Windows-*.zip "$d"/Braving-Installer-*.exe; do
+      for f in "$d"/cerium_*.exe "$d"/cerium_*.7z "$d"/ceriumbrowser_*.zip "$d"/ceriumbrowser_*.exe "$d"/Cerium-Windows-*.zip "$d"/Cerium-Windows-*.7z "$d"/Cerium-Installer-*.exe; do
         if [[ -f "$f" ]]; then
           if [[ "${COMPILE_TARGET}" == "windows_x64" && ! "$f" =~ x64 ]]; then
             continue
@@ -186,25 +186,35 @@ if [[ ${#PACKAGES_FOUND[@]} -eq 0 ]]; then
       echo "[DRY-RUN] Simulating Android release package:"
       android_arch="${TARGET_ARCH}"
       [[ "${android_arch}" == "all" || -z "${android_arch}" ]] && android_arch="arm64"
-      PACKAGES_FOUND+=("${REPO_ROOT}/out/apks/Cerium-${DYNAMIC_BRAVE_VERSION}-${android_arch}.apk")
+      PACKAGES_FOUND+=("${REPO_ROOT}/out/apks/cerium_${android_arch}.apk")
     elif [[ "${COMPILE_TARGET}" == "windows_x64" ]]; then
       echo "[DRY-RUN] Simulating Windows x64 release package:"
-      PACKAGES_FOUND+=("${REPO_ROOT}/out/packages/Cerium-Windows-x64-v${DYNAMIC_BRAVE_VERSION}.zip")
+      PACKAGES_FOUND+=(
+        "${REPO_ROOT}/out/packages/cerium_x64.exe"
+        "${REPO_ROOT}/out/packages/cerium_x64.7z"
+      )
     elif [[ "${COMPILE_TARGET}" == "windows_arm64" ]]; then
       echo "[DRY-RUN] Simulating Windows arm64 release package:"
-      PACKAGES_FOUND+=("${REPO_ROOT}/out/packages/Cerium-Windows-arm64-v${DYNAMIC_BRAVE_VERSION}.zip")
+      PACKAGES_FOUND+=(
+        "${REPO_ROOT}/out/packages/cerium_arm64.exe"
+        "${REPO_ROOT}/out/packages/cerium_arm64.7z"
+      )
     elif [[ "${COMPILE_TARGET}" == windows* ]]; then
       echo "[DRY-RUN] Simulating Windows release package(s):"
       PACKAGES_FOUND+=(
-        "${REPO_ROOT}/out/packages/Cerium-Windows-x64-v${DYNAMIC_BRAVE_VERSION}.zip"
-        "${REPO_ROOT}/out/packages/Cerium-Windows-arm64-v${DYNAMIC_BRAVE_VERSION}.zip"
+        "${REPO_ROOT}/out/packages/cerium_x64.exe"
+        "${REPO_ROOT}/out/packages/cerium_x64.7z"
+        "${REPO_ROOT}/out/packages/cerium_arm64.exe"
+        "${REPO_ROOT}/out/packages/cerium_arm64.7z"
       )
     else
       echo "[DRY-RUN] Simulating full multi-architecture release:"
       PACKAGES_FOUND+=(
-        "${REPO_ROOT}/out/apks/Cerium-${DYNAMIC_BRAVE_VERSION}-arm64.apk"
-        "${REPO_ROOT}/out/packages/Cerium-Windows-x64-v${DYNAMIC_BRAVE_VERSION}.zip"
-        "${REPO_ROOT}/out/packages/Cerium-Windows-arm64-v${DYNAMIC_BRAVE_VERSION}.zip"
+        "${REPO_ROOT}/out/apks/cerium_arm64.apk"
+        "${REPO_ROOT}/out/packages/cerium_x64.exe"
+        "${REPO_ROOT}/out/packages/cerium_x64.7z"
+        "${REPO_ROOT}/out/packages/cerium_arm64.exe"
+        "${REPO_ROOT}/out/packages/cerium_arm64.7z"
       )
     fi
   else
@@ -241,7 +251,7 @@ for pkg in "${PACKAGES_FOUND[@]}"; do
 
   # Determine platform
   pkg_platform="android"
-  if [[ "$bname" =~ \.zip$ || "$bname" =~ \.exe$ ]]; then
+  if [[ "$bname" =~ \.zip$ || "$bname" =~ \.7z$ || "$bname" =~ \.exe$ ]]; then
     pkg_platform="windows"
   fi
 

@@ -28,6 +28,13 @@ def apply(ctx: MutatorContext):
         "registry->RegisterBooleanPref(kNewTabPageShowStats, false);",
     )
 
+    # Set default value of New tab page show to blank page
+    ctx.replace_in_file(
+        "browser/brave_profile_prefs.cc",
+        "static_cast<int>(NewTabPageShowsOptions::kDashboard));",
+        "static_cast<int>(NewTabPageShowsOptions::kBlankpage));",
+    )
+
     # Disable top sites shortcuts on Desktop NTP directly in brave-core
     ctx.replace_in_file(
         "browser/brave_profile_prefs.cc",

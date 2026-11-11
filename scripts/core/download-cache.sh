@@ -1,218 +1,77 @@
 #!/usr/bin/env bash
+# Cerium — In-Runner CAS Cache Download and Extraction
+# Restores rolling NativeLink CAS and Action Cache from GitLab Generic Package Registry.
+# Immediately cleans up downloaded archive chunks to conserve runner disk space.
+
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/core/build-common.sh
+source "${SCRIPT_DIR}/build-common.sh"
+
+CACHE_VERSION="$(resolve_cas_cache_version)"
+NATIVELINK_DIR="$(resolve_nativelink_dir)"
+rm -f "${NATIVELINK_DIR}/.cache_uploaded"
+
+if [[ "${FORCE_CACHE_REBUILD:-false}" =~ ^([Tt][Rr][Uu][Ee]|1|[Yy][Ee][Ss])$ ]]; then
+  echo "FORCE_CACHE_REBUILD is set to true. Skipping CAS cache download and starting with a clean store."
+  rm -rf "${NATIVELINK_DIR}/cas" "${NATIVELINK_DIR}/ac"
+  rm -f "${NATIVELINK_DIR}/.cache_restored"
+  mkdir -p "${NATIVELINK_DIR}/cas/content" "${NATIVELINK_DIR}/cas/tmp" \
+           "${NATIVELINK_DIR}/ac/content" "${NATIVELINK_DIR}/ac/tmp"
+  exit 0
+fi
 
 if [[ -z "${CI_API_V4_URL:-}" || -z "${CI_JOB_TOKEN:-}" || -z "${CI_PROJECT_ID:-}" ]]; then
   echo "GitLab CI API variables not set. Skipping cache download."
   exit 0
 fi
 
-if [[ -z "${DYNAMIC_BRAVE_VERSION:-}" && -z "${BRAVE_VERSION:-}" ]]; then
-  echo "ERROR: Neither DYNAMIC_BRAVE_VERSION nor BRAVE_VERSION are set."
-  exit 1
-fi
+AUTH_HEADER="$(resolve_gitlab_auth_header)"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-TARGET_ARCH="${TARGET_ARCH:-arm64}"
-CACHE_VERSION="${CACHE_VERSION:-${DYNAMIC_BRAVE_VERSION:-${BRAVE_VERSION}}-${TARGET_ARCH}}"
-PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cerium-cache/${CACHE_VERSION}"
-WORKSPACE_DIR="${WORKSPACE_DIR:-${CI_PROJECT_DIR:-${REPO_ROOT}}/build-workspace}"
-OUT_DIR="${WORKSPACE_DIR}/src/out"
+PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/cerium-cas/${CACHE_VERSION}"
 
 echo "=========================================="
-echo " Restoring Chromium Cache for ${CACHE_VERSION}"
+echo " Restoring Cerium CAS Cache for ${CACHE_VERSION}"
+echo " Package URL: ${PKG_URL}"
+echo " Target Dir : ${NATIVELINK_DIR}"
 echo "=========================================="
 
-DOWNLOAD_TMP_DIR=$(mktemp -d /tmp/cache-download-XXXXXX)
+DOWNLOAD_TMP_DIR=$(mktemp -d /tmp/cas-download-XXXXXX)
 trap 'rm -rf "${DOWNLOAD_TMP_DIR}"' EXIT
 cd "${DOWNLOAD_TMP_DIR}"
 
 echo "Fetching checksums from ${PKG_URL}/checksums.sha256..."
-# Use -sL (--location) so curl follows 302 redirects to object storage (e.g. Google Cloud Storage on GitLab SaaS)
-HTTP_CODE=$(curl -sL -o checksums.sha256 -w "%{http_code}" --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "${PKG_URL}/checksums.sha256")
+HTTP_CODE=$(curl -sL -o checksums.sha256 -w "%{http_code}" --header "${AUTH_HEADER}" "${PKG_URL}/checksums.sha256")
 
 if [[ "${HTTP_CODE}" != "200" ]]; then
-  # Fallback to legacy braving-cache package if present
-  LEGACY_PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/braving-cache/${CACHE_VERSION}"
-  LEGACY_HTTP_CODE=$(curl -sL -o checksums.sha256 -w "%{http_code}" --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "${LEGACY_PKG_URL}/checksums.sha256")
-  if [[ "${LEGACY_HTTP_CODE}" == "200" ]]; then
-    PKG_URL="${LEGACY_PKG_URL}"
-    HTTP_CODE="200"
-  fi
-fi
-
-if [[ "${HTTP_CODE}" != "200" ]]; then
-  echo "No cache found for ${CACHE_VERSION} (HTTP ${HTTP_CODE}). Starting cold build."
+  echo "No CAS cache found for ${CACHE_VERSION} (HTTP ${HTTP_CODE}). Starting cold build."
   exit 0
 fi
 
-echo "Cache manifest found (HTTP ${HTTP_CODE}):"
+echo "CAS cache manifest found (HTTP ${HTTP_CODE}):"
 cat checksums.sha256
 
-for chunk in $(awk '{print $2}' checksums.sha256); do
-  echo "Downloading ${chunk}..."
-  curl --fail --silent --show-error --location --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "${PKG_URL}/${chunk}" -o "${chunk}"
-done
+echo "Downloading chunks in parallel..."
+download_chunks_parallel "${PKG_URL}" "${AUTH_HEADER}"
 
 echo "Verifying SHA256 checksums..."
 if ! sha256sum -c checksums.sha256; then
-  echo "ERROR: Checksum validation failed! Cache is corrupted."
-  exit 1
+  echo "WARNING: Checksum validation failed! CAS cache is incomplete or corrupted. Falling back to cold build..."
+  rm -f chunk.tar.gz.* checksums.sha256
+  rm -rf "${NATIVELINK_DIR}"
+  exit 0
 fi
 
-echo "Extracting cache to ${OUT_DIR}..."
-mkdir -p "${OUT_DIR}"
-# Extract without -m to preserve original compiler timestamps from Stage 2
-cat chunk.tar.gz.* | tar -xzf - -C "${OUT_DIR}"
+echo "Extracting CAS cache into ${NATIVELINK_DIR}..."
+mkdir -p "${NATIVELINK_DIR}"
+cat chunk.tar.gz.* | tar -xzf - -C "${NATIVELINK_DIR}"
+mkdir -p "${NATIVELINK_DIR}/cas/tmp" "${NATIVELINK_DIR}/ac/tmp"
 
-# Clean the process lock file and legacy deps if present
-rm -f "${OUT_DIR}/Release/.siso_lock" "${OUT_DIR}/Release/.ninja_deps"
+# Immediate disk cleanup for 200 GB runner: delete downloaded archive chunks immediately after extraction
+echo "Immediately deleting downloaded chunks to free disk space..."
+rm -f chunk.tar.gz.* checksums.sha256
+touch "${NATIVELINK_DIR}/.cache_restored"
 
-# CRITICAL: Do NOT delete build.ninja.d — when the depfile is missing, Ninja/Siso
-# treats the generator edge as dirty and unconditionally re-runs gn gen.
-# Instead, we touch build.ninja.d along with other manifest files (below) so that
-# build.ninja.stamp is >= all depfile inputs. Since cache restore now runs AFTER
-# gclient sync, all source .gn/.gni files already have their final timestamps
-# and the touched manifest files will be newer, satisfying Siso's staleness check.
-
-# Ensure timestamp hierarchy: T_source <= T_manifest < T_outputs
-# This prevents Siso's mtime check (inmtime.After(outmtime)) from marking
-# pre-built outputs dirty, while keeping build.ninja newer than source files.
-echo "Synchronizing build graph and artifact timestamps to prevent Siso dirty cache invalidation..."
-
-# 1. Touch build manifest files to current time (newer than all freshly checked out source files).
-#    Touch args.gn FIRST, then build.ninja.d, build.ninja and build.ninja.stamp so build.ninja.stamp is >= args.gn.
-for manifest_file in "${OUT_DIR}/Release/args.gn" "${OUT_DIR}/Release/build.ninja.d" "${OUT_DIR}/Release/build.ninja" "${OUT_DIR}/Release/build.ninja.stamp"; do
-  if [[ -f "${manifest_file}" ]]; then
-    touch "${manifest_file}"
-  fi
-done
-
-# 2. Ensure a timestamp separation so outputs are strictly newer than manifest
-sleep 1
-
-# 3. Touch all pre-compiled object files and generated outputs to ensure outmtime > inmtime
-# This covers obj/ (compiled .o files), gen/ (generated headers/sources), and
-# other intermediate build artifacts that Siso checks timestamps on.
-if [[ -d "${OUT_DIR}/Release/obj" || -d "${OUT_DIR}/Release/gen" ]]; then
-  echo "Touching cached obj/ and gen/ artifacts to preserve up-to-date state..."
-  find "${OUT_DIR}/Release/obj" "${OUT_DIR}/Release/gen" -type f -exec touch {} + 2>/dev/null || true
-fi
-
-# 3b. Sync chrome_base_module_resources.res.sources and chrome_public_apk_base_module_resources.res.sources
-#     with Stage 1's mipmap-anydpi-v26 vector icon XMLs so prepare_resources.py succeeds even if gn gen is skipped.
-for res_sources in \
-  "${OUT_DIR}/Release/gen/chrome/android/chrome_base_module_resources.res.sources" \
-  "${OUT_DIR}/Release/gen/chrome/android/chrome_public_apk_base_module_resources.res.sources"; do
-  if [[ -f "${res_sources}" ]]; then
-    for xml_name in "app_icon.xml" "layered_app_icon.xml" "layered_app_icon_background.xml"; do
-      rel_entry="../../chrome/android/java/res_chromium_base/mipmap-anydpi-v26/${xml_name}"
-      if ! grep -qF "${rel_entry}" "${res_sources}"; then
-        echo "${rel_entry}" >> "${res_sources}"
-      fi
-    done
-  fi
-done
-rm -f "${OUT_DIR}/Release/obj/chrome/android/chrome_base_module_resources.resources.zip" \
-      "${OUT_DIR}/Release/obj/chrome/android/chrome_public_apk_base_module_resources.resources.zip"
-
-# 3c. Invalidate cached object and buildflag files for patched Brave / updater / crx_file targets
-#     so Stage 3 always recompiles the latest Stage 1 patches & mutators while
-#     strictly preserving GN assertion and metadata files (*_expected_outputs.txt).
-if [[ -f "${OUT_DIR}/Release/obj/brave/components/update_client/buildflags.ninja" ]]; then
-  sed -i -E 's|https://(updates\.braving\.org\|braving\.gitlab\.io/braving-updater)/components|https://ceriumbrowser.gitlab.io/cerium-updater/components|g' \
-    "${OUT_DIR}/Release/obj/brave/components/update_client/buildflags.ninja" || true
-fi
-rm -rf "${OUT_DIR}/Release/gen/brave/components/update_client"
-
-for comp_dir in \
-  "obj/brave/app" \
-  "obj/brave/browser" \
-  "obj/brave/components/brave_shields" \
-  "obj/brave/components/brave_policy" \
-  "obj/brave/components/brave_origin" \
-  "obj/components/update_client" \
-  "obj/components/crx_file"; do
-  target_path="${OUT_DIR}/Release/${comp_dir}"
-  if [[ -d "${target_path}" ]]; then
-    find "${target_path}" -name "*.o" -delete 2>/dev/null || true
-  fi
-done
-
-# Safeguard: Verify that all generator depfile inputs in build.ninja.d exist on disk.
-# If an expected assertion output (e.g. *_expected_outputs.txt) was not restored,
-# touch it so Siso depfile verification succeeds without fatal missing-inputs errors.
-if [[ -f "${OUT_DIR}/Release/build.ninja.d" ]]; then
-  python3 -c '
-import os, sys
-
-out_dir = os.path.abspath(sys.argv[1])
-depfile = os.path.join(out_dir, "build.ninja.d")
-if not os.path.exists(depfile):
-    sys.exit(0)
-
-try:
-    with open(depfile, "r", encoding="utf-8") as f:
-        content = f.read()
-    content = content.replace("\\\n", " ")
-    parts = content.split(":", 1)
-    if len(parts) == 2:
-        raw_inputs = parts[1].replace("\\ ", "__ESCAPED_SPACE__").split()
-        for raw_inp in raw_inputs:
-            inp = raw_inp.replace("__ESCAPED_SPACE__", " ").strip()
-            if not inp:
-                continue
-            full_path = inp if os.path.isabs(inp) else os.path.normpath(os.path.join(out_dir, inp))
-            if not os.path.exists(full_path) and (full_path.startswith(out_dir) or inp.endswith("expected_outputs.txt")):
-                try:
-                    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                    with open(full_path, "w", encoding="utf-8") as pf:
-                        pass
-                    print(f"Created missing depfile input placeholder: {inp}")
-                except Exception:
-                    pass
-except Exception as e:
-    print(f"Warning during depfile validation: {e}", file=sys.stderr)
-' "${OUT_DIR}/Release"
-fi
-
-sleep 1
-for patched_src in \
-  "app/brave_main_delegate.cc" \
-  "browser/brave_browser_process_impl.cc" \
-  "browser/net/brave_network_audit_allowed_lists.h" \
-  "chromium_src/components/crx_file/crx_verifier.cc" \
-  "chromium_src/components/update_client/net/network_impl.cc" \
-  "chromium_src/components/update_client/update_checker.cc" \
-  "components/brave_shields/core/browser/ad_block_component_filters_provider.cc" \
-  "components/brave_shields/core/browser/ad_block_component_installer.cc" \
-  "components/brave_shields/core/browser/ad_block_component_service_manager.cc" \
-  "components/brave_shields/core/browser/ad_block_filters_provider_manager.cc"; do
-  if [[ -f "${WORKSPACE_DIR}/src/brave/${patched_src}" ]]; then
-    touch "${WORKSPACE_DIR}/src/brave/${patched_src}"
-  fi
-done
-
-# 4. Write a marker file so build scripts can detect cache presence and skip gn gen
-touch "${OUT_DIR}/Release/.cache_restored"
-
-# Verify restored Siso state
-# NOTE: .ninja_deps is NOT checked because Siso (use_siso=true) uses its own
-# .siso_deps/.siso_fs_state for dependency tracking and never writes .ninja_deps.
-echo "Restored Siso state files:"
-for f in ".siso_fs_state" ".siso_deps" ".ninja_log"; do
-  if [[ -f "${OUT_DIR}/Release/${f}" ]]; then
-    echo "  [RESTORED] ${f} ($(stat -c%s "${OUT_DIR}/Release/${f}" 2>/dev/null || stat -f%z "${OUT_DIR}/Release/${f}" 2>/dev/null || echo "present") bytes)"
-  else
-    echo "  [WARNING] ${f} missing after restore"
-  fi
-done
-
-if [[ -d "${OUT_DIR}/Release/.siso_local_cache" ]]; then
-  echo "  [RESTORED] .siso_local_cache directory"
-fi
-
-RESTORED_SIZE=$(du -sh "${OUT_DIR}/Release" 2>/dev/null | cut -f1 || echo "unknown")
-echo "Cache restore complete! Restored ${RESTORED_SIZE} into ${OUT_DIR}/Release."
-echo " [NOTE] Siso reports reused cached targets under 'skip:'."
-echo "        The 'cache:' metric is for remote cloud RBE and is expected to be 0 for local builds."
+CAS_SIZE=$(du -sh "${NATIVELINK_DIR}" 2>/dev/null | cut -f1 || echo "unknown")
+echo "CAS cache restore complete! Restored ${CAS_SIZE} into ${NATIVELINK_DIR}."

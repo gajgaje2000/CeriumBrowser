@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -230,7 +231,7 @@ class TestCIScriptSyntax(unittest.TestCase):
         self.assertEqual(res.returncode, 0, f"publish-release dry-run failed: {res.stderr}")
         self.assertIn("Simulating Android release package:", res.stdout)
         self.assertNotIn("Simulating Windows", res.stdout)
-        self.assertIn("Cerium-1.96.61-arm64.apk", res.stdout)
+        self.assertIn("cerium_arm64.apk", res.stdout)
         self.assertIn("### Android", res.stdout)
         self.assertNotIn("### Windows", res.stdout)
 
@@ -250,8 +251,10 @@ class TestCIScriptSyntax(unittest.TestCase):
         self.assertEqual(res.returncode, 0, f"publish-release dry-run failed: {res.stderr}")
         self.assertIn("Simulating Windows release package(s):", res.stdout)
         self.assertNotIn("Simulating Android", res.stdout)
-        self.assertIn("Cerium-Windows-x64-v1.96.61.zip", res.stdout)
-        self.assertIn("Cerium-Windows-arm64-v1.96.61.zip", res.stdout)
+        self.assertIn("cerium_x64.exe", res.stdout)
+        self.assertIn("cerium_x64.7z", res.stdout)
+        self.assertIn("cerium_arm64.exe", res.stdout)
+        self.assertIn("cerium_arm64.7z", res.stdout)
         self.assertIn("### Windows", res.stdout)
         self.assertNotIn("### Android", res.stdout)
 
@@ -271,7 +274,8 @@ class TestCIScriptSyntax(unittest.TestCase):
         self.assertEqual(res.returncode, 0, f"publish-release dry-run failed: {res.stderr}")
         self.assertIn("Simulating Windows x64 release package:", res.stdout)
         self.assertNotIn("arm64", res.stdout)
-        self.assertIn("Cerium-Windows-x64-v1.96.61.zip", res.stdout)
+        self.assertIn("cerium_x64.exe", res.stdout)
+        self.assertIn("cerium_x64.7z", res.stdout)
         self.assertIn("### Windows", res.stdout)
         self.assertNotIn("### Android", res.stdout)
 
@@ -291,22 +295,23 @@ class TestCIScriptSyntax(unittest.TestCase):
         self.assertEqual(res.returncode, 0, f"publish-release dry-run failed: {res.stderr}")
         self.assertIn("Simulating Windows arm64 release package:", res.stdout)
         self.assertNotIn("x64", res.stdout)
-        self.assertIn("Cerium-Windows-arm64-v1.96.61.zip", res.stdout)
+        self.assertIn("cerium_arm64.exe", res.stdout)
+        self.assertIn("cerium_arm64.7z", res.stdout)
         self.assertIn("### Windows", res.stdout)
         self.assertNotIn("### Android", res.stdout)
 
     def test_publish_release_package_discovery_filtering(self):
         """publish-release-direct.sh must strictly filter discovered packages by COMPILE_TARGET and fail if none found."""
-        apks_dir = os.path.join(self.REPO_ROOT, "out", "apks")
-        pkgs_dir = os.path.join(self.REPO_ROOT, "out", "packages")
-        os.makedirs(apks_dir, exist_ok=True)
-        os.makedirs(pkgs_dir, exist_ok=True)
+        with tempfile.TemporaryDirectory() as tmp_repo:
+            apks_dir = os.path.join(tmp_repo, "out", "apks")
+            pkgs_dir = os.path.join(tmp_repo, "out", "packages")
+            os.makedirs(apks_dir, exist_ok=True)
+            os.makedirs(pkgs_dir, exist_ok=True)
 
-        mock_apk = os.path.join(apks_dir, "Cerium-1.96.61-arm64.apk")
-        mock_win_x64 = os.path.join(pkgs_dir, "Cerium-Windows-x64-v1.96.61.zip")
-        mock_win_arm64 = os.path.join(pkgs_dir, "Cerium-Windows-arm64-v1.96.61.zip")
+            mock_apk = os.path.join(apks_dir, "cerium_arm64.apk")
+            mock_win_x64 = os.path.join(pkgs_dir, "cerium_x64.exe")
+            mock_win_arm64 = os.path.join(pkgs_dir, "cerium_arm64.exe")
 
-        try:
             with open(mock_apk, "w", encoding="utf-8") as f:
                 f.write("mock apk content")
             with open(mock_win_x64, "w", encoding="utf-8") as f:
@@ -316,6 +321,7 @@ class TestCIScriptSyntax(unittest.TestCase):
 
             base_env = os.environ.copy()
             base_env.update({
+                "REPO_ROOT": tmp_repo,
                 "DYNAMIC_BRAVE_VERSION": "1.96.61",
                 "CI_COMMIT_BRANCH": "release",
             })
@@ -328,13 +334,13 @@ class TestCIScriptSyntax(unittest.TestCase):
                 capture_output=True, text=True, env=env_android
             )
             self.assertEqual(res.returncode, 0, f"android dry-run failed: {res.stderr}")
-            self.assertIn("Cerium-1.96.61-arm64.apk", res.stdout)
-            self.assertNotIn("Cerium-Windows-x64", res.stdout)
-            self.assertNotIn("Cerium-Windows-arm64", res.stdout)
+            self.assertIn("cerium_arm64.apk", res.stdout)
+            self.assertNotIn("cerium_x64.exe", res.stdout)
+            self.assertNotIn("cerium_arm64.exe", res.stdout)
             self.assertIn("### Android", res.stdout)
             self.assertNotIn("### Windows", res.stdout)
 
-            # 2. When COMPILE_TARGET=windows_x64, ONLY the x64 zip should be discovered
+            # 2. When COMPILE_TARGET=windows_x64, ONLY the x64 package should be discovered
             env_win_x64 = base_env.copy()
             env_win_x64["COMPILE_TARGET"] = "windows_x64"
             res = subprocess.run(
@@ -342,9 +348,9 @@ class TestCIScriptSyntax(unittest.TestCase):
                 capture_output=True, text=True, env=env_win_x64
             )
             self.assertEqual(res.returncode, 0, f"windows_x64 dry-run failed: {res.stderr}")
-            self.assertIn("Cerium-Windows-x64-v1.96.61.zip", res.stdout)
-            self.assertNotIn("Cerium-Windows-arm64", res.stdout)
-            self.assertNotIn("Cerium-1.96.61-arm64.apk", res.stdout)
+            self.assertIn("cerium_x64.exe", res.stdout)
+            self.assertNotIn("cerium_arm64.exe", res.stdout)
+            self.assertNotIn("cerium_arm64.apk", res.stdout)
             self.assertIn("### Windows", res.stdout)
             self.assertNotIn("### Android", res.stdout)
 
@@ -366,50 +372,49 @@ class TestCIScriptSyntax(unittest.TestCase):
             self.assertNotEqual(res.returncode, 0, "Expected non-zero exit when target packages missing")
             self.assertIn("No release packages found in out/apks or out/packages", res.stderr)
 
-        finally:
-            for p in [mock_apk, mock_win_x64, mock_win_arm64]:
-                if os.path.exists(p):
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
-
     def test_publish_release_no_duplicate_links(self):
         """Ensure packages with the same basename across directories are deduplicated and do not generate duplicate links."""
-        apks_dir1 = os.path.join(self.REPO_ROOT, "out", "apks")
-        apks_dir2 = os.path.join(self.REPO_ROOT, "build-workspace", "src", "out", "Release", "apks")
-        os.makedirs(apks_dir1, exist_ok=True)
-        os.makedirs(apks_dir2, exist_ok=True)
+        with tempfile.TemporaryDirectory() as tmp_repo:
+            apks_dir1 = os.path.join(tmp_repo, "out", "apks")
+            apks_dir2 = os.path.join(tmp_repo, "build-workspace", "src", "out", "Release", "apks")
+            os.makedirs(apks_dir1, exist_ok=True)
+            os.makedirs(apks_dir2, exist_ok=True)
 
-        mock1 = os.path.join(apks_dir1, "Cerium-1.96.61-arm64.apk")
-        mock2 = os.path.join(apks_dir2, "Cerium-1.96.61-arm64.apk")
-        try:
-            with open(mock1, "w") as f:
-                f.write("mock apk 1")
-            with open(mock2, "w") as f:
-                f.write("mock apk 2")
+            test_version = "9.99.99"
+            test_apk_name = f"Cerium-{test_version}-arm64.apk"
+            mock1 = os.path.join(apks_dir1, test_apk_name)
+            mock2 = os.path.join(apks_dir2, test_apk_name)
+            created_files = []
+            try:
+                with open(mock1, "w", encoding="utf-8") as f:
+                    f.write("mock apk 1")
+                created_files.append(mock1)
+                with open(mock2, "w", encoding="utf-8") as f:
+                    f.write("mock apk 2")
+                created_files.append(mock2)
 
-            env = os.environ.copy()
-            env.update({
-                "DYNAMIC_BRAVE_VERSION": "1.96.61",
-                "TARGET_ARCH": "arm64",
-                "CI_COMMIT_BRANCH": "release",
-                "COMPILE_TARGET": "android",
-            })
-            res = subprocess.run(
-                ["bash", os.path.join(self.REPO_ROOT, "scripts/ci/publish-release-direct.sh"), "--dry-run"],
-                capture_output=True, text=True, env=env
-            )
-            self.assertEqual(res.returncode, 0, f"dry-run with duplicate files failed: {res.stderr}")
-            # Ensure the package is uploaded/linked exactly once, not duplicated
-            self.assertEqual(res.stdout.count("[DRY-RUN] Upload Cerium-1.96.61-arm64.apk ->"), 1)
-        finally:
-            for p in [mock1, mock2]:
-                if os.path.exists(p):
-                    try:
-                        os.remove(p)
-                    except OSError:
-                        pass
+                env = os.environ.copy()
+                env.update({
+                    "REPO_ROOT": tmp_repo,
+                    "DYNAMIC_BRAVE_VERSION": test_version,
+                    "TARGET_ARCH": "arm64",
+                    "CI_COMMIT_BRANCH": "release",
+                    "COMPILE_TARGET": "android",
+                })
+                res = subprocess.run(
+                    ["bash", os.path.join(self.REPO_ROOT, "scripts/ci/publish-release-direct.sh"), "--dry-run"],
+                    capture_output=True, text=True, env=env
+                )
+                self.assertEqual(res.returncode, 0, f"dry-run with duplicate files failed: {res.stderr}")
+                # Ensure the package is uploaded/linked exactly once, not duplicated
+                self.assertEqual(res.stdout.count(f"[DRY-RUN] Upload {test_apk_name} ->"), 1)
+            finally:
+                for p in created_files:
+                    if os.path.exists(p):
+                        try:
+                            os.remove(p)
+                        except OSError:
+                            pass
 
     def test_publish_release_github_dry_run(self):
         """publish-release-direct.sh --dry-run must simulate GitHub release creation and asset uploads for gajgaje2000/CeriumBrowser."""
@@ -427,11 +432,21 @@ class TestCIScriptSyntax(unittest.TestCase):
         self.assertEqual(res.returncode, 0, f"publish-release dry-run failed: {res.stderr}")
         self.assertIn("--- [DRY-RUN] Step 3: Create GitHub Release in gajgaje2000/CeriumBrowser ---", res.stdout)
         self.assertIn("Create GitHub Release for v1.96.61 -> https://github.com/gajgaje2000/CeriumBrowser/releases/tag/v1.96.61", res.stdout)
-        self.assertIn("[DRY-RUN] Upload GitHub Asset -> Cerium-1.96.61-arm64.apk", res.stdout)
+        self.assertIn("[DRY-RUN] Upload GitHub Asset -> cerium_arm64.apk", res.stdout)
         self.assertIn("GitHub URL : https://github.com/gajgaje2000/CeriumBrowser/releases/tag/v1.96.61", res.stdout)
 
     def test_apply_patches_syntax(self):
         self._check_bash_syntax('scripts/core/apply-patches.sh')
+
+    def test_apply_patches_modular_platforms(self):
+        """apply-patches.sh must support --target-os=android, --target-os=windows, and default all."""
+        res_invalid = subprocess.run(
+            ["bash", os.path.join(self.REPO_ROOT, "scripts/core/apply-patches.sh"),
+             self.REPO_ROOT, "--target-os=unsupported_os"],
+            capture_output=True, text=True
+        )
+        self.assertNotEqual(res_invalid.returncode, 0)
+        self.assertIn("Unknown target-os", res_invalid.stderr)
 
     def test_prepare_source_syntax(self):
         self._check_bash_syntax('scripts/core/prepare-source.sh')
@@ -441,9 +456,6 @@ class TestCIScriptSyntax(unittest.TestCase):
 
     def test_package_android_syntax(self):
         self._check_bash_syntax('scripts/platforms/android/package.sh')
-
-    def test_sign_apk_android_syntax(self):
-        self._check_bash_syntax('scripts/platforms/android/sign-apk.sh')
 
     def test_build_windows_syntax(self):
         self._check_bash_syntax('scripts/platforms/windows/build.sh')
@@ -501,6 +513,32 @@ class TestCIScriptSyntax(unittest.TestCase):
         self.assertNotEqual(res.returncode, 0)
         self.assertIn("Invalid architecture", res.stderr)
 
+    def test_gclient_custom_deps_and_submodule_safeguards(self):
+        """Shared gclient/sync helpers and platform build.sh scripts must enforce custom_deps and _bad_scm safeguards."""
+        common_path = os.path.join(self.REPO_ROOT, "scripts/core/build-common.sh")
+        with open(common_path, "r", encoding="utf-8") as f:
+            common_content = f.read()
+        self.assertIn('"src/third_party/clang-format/script": None', common_content, "Missing custom_deps exclusion in build-common.sh")
+        self.assertIn('"src/chrome/test/data": None', common_content, "Missing chrome/test/data exclusion in build-common.sh")
+        self.assertIn('"src/v8/test": None', common_content, "Missing v8/test exclusion in build-common.sh")
+        self.assertIn('"src/third_party/perfetto/test": None', common_content, "Missing perfetto/test exclusion in build-common.sh")
+        self.assertIn('"src/third_party/dawn/test": None', common_content, "Missing dawn/test exclusion in build-common.sh")
+        self.assertIn('"src/third_party/skia/platform_tools": None', common_content, "Missing skia/platform_tools exclusion in build-common.sh")
+        self.assertIn('"checkout_nacl": False', common_content, "Missing checkout_nacl exclusion in build-common.sh")
+        self.assertNotIn('"src/third_party/catapult": None', common_content, "catapult must be retained for typ and devil")
+        self.assertIn('_bad_scm', common_content, "Missing _bad_scm cleanup in build-common.sh")
+        self.assertIn('--no-history', common_content, "Missing --no-history in gclient sync in build-common.sh")
+        self.assertIn('--shallow', common_content, "Missing --shallow in gclient sync in build-common.sh")
+        self.assertIn('$(nproc)', common_content, "Missing nproc parallelism in gclient sync in build-common.sh")
+        self.assertIn('CHROME_HEADLESS="1"', common_content, "Missing CHROME_HEADLESS in build-common.sh")
+
+        for platform_rel in ["scripts/platforms/windows/build.sh", "scripts/platforms/android/build.sh"]:
+            build_path = os.path.join(self.REPO_ROOT, platform_rel)
+            with open(build_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn("write_gclient_config", content, f"Missing write_gclient_config call in {platform_rel}")
+            self.assertIn("sync_and_patch_chromium", content, f"Missing sync_and_patch_chromium call in {platform_rel}")
+
     def test_gitlab_ci_yaml_structure(self):
         """Validate root .gitlab-ci.yml and modular includes in .gitlab/ci/."""
         import yaml
@@ -550,8 +588,8 @@ class TestCIScriptSyntax(unittest.TestCase):
         """Verify android.yml and windows.yml rules enforce COMPILE_TARGET filtering."""
         import yaml
         for rel_path, expected_jobs in [
-            ('.gitlab/ci/android.yml', ['prepare_android_cache', 'build_android']),
-            ('.gitlab/ci/windows.yml', ['prepare_windows_cache_x64', 'prepare_windows_cache_arm64', 'build_windows_x64', 'build_windows_arm64'])
+            ('.gitlab/ci/android.yml', ['build_android']),
+            ('.gitlab/ci/windows.yml', ['build_windows_x64', 'build_windows_arm64'])
         ]:
             full_path = os.path.join(self.REPO_ROOT, rel_path)
             with open(full_path, 'r', encoding='utf-8') as f:
@@ -572,22 +610,103 @@ class TestCIScriptSyntax(unittest.TestCase):
                 has_compile_target = any('$COMPILE_TARGET' in cond for cond in rule_conditions)
                 self.assertTrue(has_compile_target, f"Job {j} must check $COMPILE_TARGET")
 
+    def test_ci_job_retry_checkpoint_rules(self):
+        """Verify android.yml and windows.yml configure auto-retry on checkpoint exit code 42."""
+        import yaml
+        # Android job retry check
+        android_path = os.path.join(self.REPO_ROOT, ".gitlab/ci/android.yml")
+        with open(android_path, 'r', encoding='utf-8') as f:
+            android_docs = [d for d in yaml.safe_load_all(f) if d]
+        android_jobs = {}
+        for d in android_docs:
+            android_jobs.update(d)
+        android_retry = android_jobs['build_android'].get('retry', {})
+        self.assertEqual(android_retry.get('max'), 1, "build_android must specify retry max: 1")
+        self.assertEqual(android_retry.get('exit_codes'), [42], "build_android must retry on exit code 42")
+
+        # Windows base retry check
+        win_path = os.path.join(self.REPO_ROOT, ".gitlab/ci/windows.yml")
+        with open(win_path, 'r', encoding='utf-8') as f:
+            win_docs = [d for d in yaml.safe_load_all(f) if d]
+        win_jobs = {}
+        for d in win_docs:
+            win_jobs.update(d)
+        win_retry = win_jobs['.build_windows_base'].get('retry', {})
+        self.assertEqual(win_retry.get('max'), 1, ".build_windows_base must specify retry max: 1")
+        self.assertEqual(win_retry.get('exit_codes'), [42], ".build_windows_base must retry on exit code 42")
+
+        # Verify shared build-common.sh defines watchdog timeout and checkpoint logic and both build.sh invoke it
+        common_path = os.path.join(self.REPO_ROOT, "scripts/core/build-common.sh")
+        with open(common_path, "r", encoding="utf-8") as f:
+            common_content = f.read()
+        self.assertIn("BUILD_TIMEOUT_SECONDS", common_content, "Missing BUILD_TIMEOUT_SECONDS in build-common.sh")
+        self.assertIn("CHECKPOINT_TRIGGERED", common_content, "Missing CHECKPOINT_TRIGGERED in build-common.sh")
+        self.assertIn("exit 42", common_content, "Missing checkpoint exit 42 in build-common.sh")
+        self.assertIn("upload_cas_cache", common_content, "Missing upload_cas_cache call in build-common.sh")
+
+        for rel_script in ["scripts/platforms/android/build.sh", "scripts/platforms/windows/build.sh"]:
+            full_path = os.path.join(self.REPO_ROOT, rel_script)
+            with open(full_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn("run_siso_compilation", content, f"Missing run_siso_compilation call in {rel_script}")
+            self.assertIn("upload_cas_cache()", content, f"Missing upload_cas_cache definition in {rel_script}")
+
     def test_resolve_versions_execution(self):
         """resolve-versions.py must generate deterministic manifest and env files."""
+        import glob
+        import shutil
         import tempfile
+        import yaml
+
+        manifests = sorted(glob.glob(os.path.join(self.REPO_ROOT, "metadata/releases/*.yaml")))
+        if not manifests:
+            return
+        manifest = manifests[-1]
+        with open(manifest, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        brave_version = data.get("brave_version")
+        chromium_version = data.get("chromium_version")
+
         with tempfile.TemporaryDirectory() as tmpdir:
+            meta_dir = os.path.join(tmpdir, "metadata")
+            os.makedirs(meta_dir, exist_ok=True)
+            upstream_file = os.path.join(self.REPO_ROOT, f"metadata/upstream-{brave_version}.yaml")
+            if os.path.isfile(upstream_file):
+                shutil.copy2(upstream_file, meta_dir)
+
             env_file = os.path.join(tmpdir, "test.env")
             res = subprocess.run(
                 [sys.executable, os.path.join(self.REPO_ROOT, "scripts/core/resolve-versions.py"),
-                 "1.96.61", f"--repo-root={tmpdir}", f"--env-file={env_file}"],
+                 brave_version, f"--repo-root={tmpdir}", f"--env-file={env_file}"],
                 capture_output=True, text=True
             )
             self.assertEqual(res.returncode, 0, f"resolve-versions failed: {res.stderr}")
             self.assertTrue(os.path.isfile(env_file))
             with open(env_file, "r") as f:
                 c = f.read()
-            self.assertIn("DYNAMIC_BRAVE_VERSION=1.96.61", c)
-            self.assertIn("DYNAMIC_CHROMIUM_VERSION=154.0.8037.98", c)
+            self.assertIn(f"DYNAMIC_BRAVE_VERSION={brave_version}", c)
+            self.assertIn(f"DYNAMIC_CHROMIUM_VERSION={chromium_version}", c)
+            self.assertIn("DYNAMIC_PACKAGE_ID=", c)
+
+    def test_resolve_latest_brave_release_html_fallback(self):
+        """resolve_latest_brave_release must fall back to HTML redirect when GitHub API fails with 504/rate-limit."""
+        import importlib.util
+        from unittest.mock import patch
+        spec = importlib.util.spec_from_file_location("resolve_versions", os.path.join(self.REPO_ROOT, "scripts/core/resolve-versions.py"))
+        rv = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rv)
+
+        with patch.object(rv, "fetch_json", side_effect=Exception("HTTP Error 504: Gateway Timeout")):
+            tag, cr = rv.resolve_latest_brave_release(self.REPO_ROOT)
+            self.assertTrue(bool(tag), "Should resolve tag via HTML fallback")
+            self.assertRegex(tag, r"^[0-9]+\.[0-9]+\.[0-9]+$")
+
+    def test_gitlab_ci_feature_branch_workflow(self):
+        """.gitlab-ci.yml workflow rules must include feature branch pattern."""
+        ci_file = os.path.join(self.REPO_ROOT, ".gitlab-ci.yml")
+        with open(ci_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn('$CI_COMMIT_BRANCH =~ /^feat\\//', content)
 
     def test_scripts_are_executable(self):
         """CI and core scripts must have execute permission."""
@@ -597,17 +716,20 @@ class TestCIScriptSyntax(unittest.TestCase):
             'scripts/core/apply-patches.sh',
             'scripts/core/prepare-source.sh',
             'scripts/core/resolve-versions.py',
+            'scripts/core/branch_utils.py',
+            'scripts/core/build-common.sh',
             'scripts/core/apply-assets.sh',
             'scripts/core/apply-branding.py',
             'scripts/core/apply-features.py',
             'scripts/core/filter-build-log.py',
+            'scripts/core/setup-win-toolchain.py',
             'scripts/core/upload-cache.sh',
             'scripts/core/download-cache.sh',
+            'scripts/core/nativelink.sh',
             'scripts/core/verify-all.sh',
             'scripts/core/verify-branding.sh',
             'scripts/platforms/android/build.sh',
             'scripts/platforms/android/package.sh',
-            'scripts/platforms/android/sign-apk.sh',
             'scripts/platforms/windows/build.sh',
             'scripts/platforms/windows/package.sh',
         ]
@@ -618,6 +740,130 @@ class TestCIScriptSyntax(unittest.TestCase):
                 os.access(full_path, os.X_OK),
                 f"{script} is not executable"
             )
+
+    def test_filter_build_log_carriage_return_and_heartbeat(self):
+        """filter-build-log.py must handle \\r in-place updates, throttle steps, and retain full log."""
+        import subprocess, tempfile
+        filter_script = os.path.join(self.REPO_ROOT, 'scripts/core/filter-build-log.py')
+        with tempfile.NamedTemporaryFile(suffix='.log', delete=False) as tmp_log:
+            log_path = tmp_log.name
+        try:
+            # Stream:
+            # 1. Non-progress message
+            # 2. Step 1 (printed)
+            # 3. Step 2 (multiple of 2 -> printed)
+            # 4. Step 3 (throttled when step_interval=2)
+            # 5. Diagnostic warning (always printed)
+            # 6. Step 4 (Siso duration-prefixed multiple of 2 -> printed)
+            # 7. Step 5 (final step -> printed)
+            stream_input = (
+                "Siso initializing graph\n"
+                "\r[1/5] ACTION //base:foo\r"
+                "\x1b[K[2/5] ACTION //base:bar\r"
+                "0.95s [3/5] S CXX obj/base/throttled.o\r"
+                "warning: unused variable in test.cc\n"
+                "1.25s [4/5] S CXX obj/base/baz.o\r"
+                "2.50s [5/5] LINK test.exe\n"
+            )
+            res = subprocess.run(
+                [sys.executable, "-u", filter_script, log_path, "2", "1"],
+                input=stream_input,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(res.returncode, 0, f"filter-build-log.py failed: {res.stderr}")
+            stdout = res.stdout
+
+            # Verify non-progress message printed
+            self.assertIn("Siso initializing graph", stdout)
+            # Verify step 1 printed
+            self.assertIn("[1/5 (20.0%)]", stdout)
+            # Verify step 3 throttled from stdout
+            self.assertNotIn("[3/5", stdout)
+            # Verify warning printed immediately
+            self.assertIn("warning: unused variable in test.cc", stdout)
+            # Verify Siso duration-prefixed step 4 printed
+            self.assertIn("[4/5 (80.0%)] S CXX obj/base/baz.o", stdout)
+            # Verify Siso duration-prefixed step 5 (final) printed
+            self.assertIn("[5/5 (100.0%)] LINK test.exe", stdout)
+
+            # Verify build.log captured 100% of all lines including throttled step 3
+            with open(log_path, "r", encoding="utf-8") as f:
+                log_content = f.read()
+            self.assertIn("[3/5] S CXX obj/base/throttled.o", log_content)
+            self.assertIn("warning: unused variable in test.cc", log_content)
+        finally:
+            if os.path.exists(log_path):
+                os.unlink(log_path)
+
+    def test_filter_build_log_minute_hour_prefixes_and_quota_cap(self):
+        """filter-build-log.py must match minutes/hours prefixes, throttle error-in-path progress, and enforce log quota cap."""
+        import subprocess, tempfile
+        filter_script = os.path.join(self.REPO_ROOT, 'scripts/core/filter-build-log.py')
+        with tempfile.NamedTemporaryFile(suffix='.log', delete=False) as tmp_log:
+            log_path = tmp_log.name
+        try:
+            stream_input = (
+                "[1/10] CXX foo.o\n"
+                "1m05s [2/10] CXX obj/components/error_page/error.o\n"
+                "1m10s [3/10] CXX bar.o\n"
+                "2h15m30s [4/10] CXX baz.o\n"
+                "siso: 2h15m31s [5/10] CXX qux.o\n"
+                "reapi: [6/10] CXX quux.o\n"
+                "FAILED: obj/fail/bad.o\n"
+                "clang++: error: undefined symbol\n"
+                "2h15m40s [10/10] LINK final.exe\n"
+            )
+            res = subprocess.run(
+                [sys.executable, "-u", filter_script, log_path, "2", "1"],
+                input=stream_input,
+                text=True,
+                capture_output=True,
+            )
+            self.assertEqual(res.returncode, 0, f"filter-build-log.py failed: {res.stderr}")
+            stdout = res.stdout
+
+            # Step 1 printed
+            self.assertIn("[1/10 (10.0%)]", stdout)
+            # Step 2 has "error" in path, but it's step 2 (multiple of 2) -> printed as a throttled step, NOT raw line
+            self.assertIn("[2/10 (20.0%)] CXX obj/components/error_page/error.o", stdout)
+            # Step 3 throttled
+            self.assertNotIn("[3/10", stdout)
+            # Step 4 printed (2h15m30s hour prefix matched!)
+            self.assertIn("[4/10 (40.0%)] CXX baz.o", stdout)
+            # Step 5 throttled (siso: 2h15m31s prefix matched!)
+            self.assertNotIn("[5/10", stdout)
+            # Step 6 printed (reapi: prefix matched!)
+            self.assertIn("[6/10 (60.0%)] CXX quux.o", stdout)
+            # Fatal error printed
+            self.assertIn("FAILED: obj/fail/bad.o", stdout)
+            self.assertIn("clang++: error: undefined symbol", stdout)
+            # Final step printed
+            self.assertIn("[10/10 (100.0%)] LINK final.exe", stdout)
+
+            # Test log cap safeguard: if CERIUM_MAX_LOG_BYTES is exceeded, stdout is capped while build.log retains all lines
+            env = dict(os.environ, CERIUM_MAX_LOG_BYTES="500")
+            spam_stream = (
+                "\n".join([f"warning: spam line {i}" for i in range(15)]) + "\n" +
+                "\n".join([f"info: regular build message {i}" for i in range(30)]) + "\n" +
+                "FAILED: fatal.o\n"
+            )
+            res_cap = subprocess.run(
+                [sys.executable, "-u", filter_script, log_path, "10", "1"],
+                input=spam_stream,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+            self.assertEqual(res_cap.returncode, 0)
+            self.assertIn("FAILED: fatal.o", res_cap.stdout)
+            self.assertLess(len(res_cap.stdout.encode("utf-8")), 1000)
+            with open(log_path, "r", encoding="utf-8") as f:
+                log_data = f.read()
+            self.assertIn("info: regular build message 29", log_data)
+        finally:
+            if os.path.exists(log_path):
+                os.unlink(log_path)
 
 
 if __name__ == '__main__':

@@ -18,3 +18,23 @@ def apply(ctx: MutatorContext):
         "/*default_value=*/ControlType::BLOCK_THIRD_PARTY>;",
         "/*default_value=*/ControlType::BLOCK>;",
     )
+
+    ctx.replace_in_file(
+        "browser/brave_browser_process_impl.cc",
+        "  // eagerly initialize for component updater\n  https_upgrade_exceptions_service();",
+        "  // eagerly initialize for component updater\n  ad_block_service();\n  https_upgrade_exceptions_service();",
+        check_token="ad_block_service();\n  https_upgrade_exceptions_service();",
+    )
+
+    ctx.replace_in_file(
+        "components/brave_shields/core/browser/ad_block_filters_provider_manager.cc",
+        "  // All startup providers are initialized so we can safely consume the startup\n"
+        "  // notification. The next call to OnChanged will trigger NotifyObservers\n"
+        "  if (MaybeConsumeEngineStartupChangeNotification(is_for_default_engine)) {\n"
+        "    return;\n"
+        "  }\n\n"
+        "  NotifyObservers(is_for_default_engine);",
+        "  MaybeConsumeEngineStartupChangeNotification(is_for_default_engine);\n"
+        "  NotifyObservers(is_for_default_engine);",
+        check_token="MaybeConsumeEngineStartupChangeNotification(is_for_default_engine);\n  NotifyObservers(is_for_default_engine);",
+    )

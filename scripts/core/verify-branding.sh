@@ -18,8 +18,8 @@ FAILURES=0
 echo "Checking release manifests..."
 for manifest in "${REPO_ROOT}/metadata/releases"/*.yaml; do
   if [[ -f "${manifest}" ]]; then
-    if ! grep -Eq 'package_id:[[:space:]]*"?org\.cerium\.browser"?' "${manifest}"; then
-      echo "ERROR: Manifest ${manifest} does not specify package_id: org.cerium.browser" >&2
+    if ! grep -Eq "^[[:space:]]*package_id:[[:space:]]*['\"]?org\.cerium\.browser(\.[a-zA-Z0-9_]+)?['\"]?[[:space:]]*$" "${manifest}"; then
+      echo "ERROR: Manifest ${manifest} does not specify valid package_id (org.cerium.browser or org.cerium.browser.<branch>)" >&2
       FAILURES=$((FAILURES + 1))
     else
       echo " [OK] Manifest ${manifest} has valid package_id."
@@ -27,17 +27,17 @@ for manifest in "${REPO_ROOT}/metadata/releases"/*.yaml; do
   fi
 done
 
-# 2. Check for branding patch
-echo "Checking branding patch..."
-if [[ -f "${REPO_ROOT}/patches/android/0001-cerium-branding.patch" ]]; then
-  echo " [OK] Branding patch found."
+# 2. Check for branding patches
+echo "Checking branding patches..."
+if [[ -f "${REPO_ROOT}/patches/android/cerium-branding.patch" && -f "${REPO_ROOT}/patches/common/cerium-branding.patch" ]]; then
+  echo " [OK] Branding patches found."
 else
-  echo "ERROR: patches/android/0001-cerium-branding.patch is missing." >&2
+  echo "ERROR: Branding patch (patches/android/cerium-branding.patch or patches/common/cerium-branding.patch) is missing." >&2
   FAILURES=$((FAILURES + 1))
 fi
 
-if grep -Fq 'chrome_public_manifest_package = "${PACKAGE_ID}"' "${REPO_ROOT}/scripts/platforms/android/build.sh"; then
-  echo " [OK] Package ID enforcement (chrome_public_manifest_package) present in build.sh."
+if grep -Fq 'chrome_public_manifest_package = "${PACKAGE_ID}"' "${REPO_ROOT}/scripts/platforms/android/build.sh" || grep -Fq 'chrome_public_manifest_package = "${PACKAGE_ID}"' "${REPO_ROOT}/configs/gn/android.gni"; then
+  echo " [OK] Package ID enforcement (chrome_public_manifest_package) present in build configuration."
 else
   echo "ERROR: build.sh does not configure chrome_public_manifest_package." >&2
   FAILURES=$((FAILURES + 1))

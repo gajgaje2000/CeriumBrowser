@@ -70,6 +70,7 @@ Cerium Browser
     |-- AUTHORS              Lead author and contributor credits
     |-- CONTRIBUTING         Branch model (release vs main) & contribution guide
     |-- THANKS               Detailed acknowledgments and community thanks
+    |-- requirements-dev.txt Python dev/testing requirements (pytest, pyyaml)
     |-- branding/            Master vector identity, Android drawables, static PNGs
     |   |-- android/         Vector logo drawables, adaptive and themed icons
     |   `-- brave-core-static/ 156 static PNGs and 10 SVGs for brave-core overlay
@@ -99,6 +100,8 @@ Cerium Browser
         |   |-- check-release-needed.sh  Checks if release tag v<version> exists
         |   `-- publish-release-direct.sh Direct APK upload & GitLab Release publisher
         `-- tests/            Automated unit and integration test suite
+            |-- conftest.py   Shared pytest fixtures
+            `-- mutators/     Modular per-mutator unit tests
 
 
 4. Building Cerium Browser

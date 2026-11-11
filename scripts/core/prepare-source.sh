@@ -11,8 +11,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 BRAVE_VERSION="${1:-${BRAVE_VERSION:-}}"
 
-# Step 0: Clean stale metadata and resolve upstream release versions
-rm -f "${REPO_ROOT}/metadata/releases"/*.yaml "${REPO_ROOT}/metadata"/upstream-*.yaml "${REPO_ROOT}/build.env"
+# Step 0: Clean stale dotenv and resolve upstream release versions
+rm -f "${REPO_ROOT}/build.env"
 python3 "${REPO_ROOT}/scripts/core/resolve-versions.py" "${BRAVE_VERSION}" --repo-root="${REPO_ROOT}"
 
 # Load resolved dynamic environment
@@ -20,6 +20,14 @@ python3 "${REPO_ROOT}/scripts/core/resolve-versions.py" "${BRAVE_VERSION}" --rep
 source "${REPO_ROOT}/build.env"
 BRAVE_VERSION="${DYNAMIC_BRAVE_VERSION}"
 BRAVE_CORE_COMMIT="${DYNAMIC_BRAVE_CORE_COMMIT}"
+
+# Clean obsolete manifests from previous builds, preserving current version
+for m in "${REPO_ROOT}/metadata/releases"/*.yaml; do
+  [[ -f "$m" && "$(basename "$m")" != "${BRAVE_VERSION}.yaml" ]] && rm -f "$m"
+done
+for u in "${REPO_ROOT}/metadata"/upstream-*.yaml; do
+  [[ -f "$u" && "$(basename "$u")" != "upstream-${BRAVE_VERSION}.yaml" ]] && rm -f "$u"
+done
 
 WORKSPACE_DIR="${WORKSPACE_DIR:-${CI_PROJECT_DIR:-$PWD}/build-workspace}"
 SRC_DIR="${WORKSPACE_DIR}/src"
@@ -30,7 +38,7 @@ echo "Phase 1: Preparing Source in ${WORKSPACE_DIR}"
 mkdir -p "${WORKSPACE_DIR}"
 
 # Step 1: Fetch exact brave-core revision (zero history)
-LOCAL_CORE="${LOCAL_BRAVE_CORE_DIR:-/run/media/pc/D/brave-core}"
+LOCAL_CORE="${LOCAL_BRAVE_CORE_DIR:-}"
 
 fetch_brave_core() {
   local fetched=false

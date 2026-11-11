@@ -1,0 +1,39 @@
+# Cerium — Pre-baked Runner Docker Image Pipeline
+# Builds and publishes the hermetic CI/CD build image using rootless Kaniko.
+
+build_builder_image:
+  stage: prepare
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  variables:
+    DOCKERFILE: "${CI_PROJECT_DIR}/.gitlab/docker/Dockerfile.builder"
+    IMAGE_TAG: "${CI_REGISTRY_IMAGE}/builder:latest"
+  before_script:
+    - |
+      if [ -z "${CI_REGISTRY_IMAGE:-}" ] || [ -z "${CI_REGISTRY:-}" ]; then
+        echo "ERROR: GitLab Container Registry is not enabled or credentials are missing."
+        echo "Enable Container Registry in: Settings > General > Visibility, project features, permissions > Container Registry"
+        exit 1
+      fi
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"username\":\"${CI_REGISTRY_USER}\",\"password\":\"${CI_REGISTRY_PASSWORD}\"}}}" > /kaniko/.docker/config.json
+  script:
+    - echo "Building Cerium builder image with Kaniko..."
+    - LOWER_IMAGE_TAG=$(echo "${IMAGE_TAG}" | tr '[:upper:]' '[:lower:]')
+    - /kaniko/executor --context "${CI_PROJECT_DIR}" --dockerfile "${DOCKERFILE}" --destination "${LOWER_IMAGE_TAG}" --cache=true
+  rules:
+    - if: '$CI_REGISTRY_IMAGE == null || $CI_REGISTRY_IMAGE == ""'
+      when: never
+    - if: '$BUILD_DOCKER_IMAGE == "true"'
+      when: always
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == "release" || $CI_COMMIT_BRANCH =~ /^feat\//'
+      changes:
+        - .gitlab/docker/**/*
+        - .gitlab/ci/docker.yml
+      when: manual
+      allow_failure: true
+    - when: never

@@ -19,6 +19,10 @@ import yaml
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_REPO_ROOT = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+if DEFAULT_REPO_ROOT not in sys.path:
+    sys.path.insert(0, DEFAULT_REPO_ROOT)
+
+from scripts.core.branch_utils import get_current_branch, get_package_id, get_app_name
 COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
@@ -65,7 +69,38 @@ def resolve_latest_brave_release(repo_root: str):
     except Exception as e:
         print(f"Note: releases list lookup failed: {e}", file=sys.stderr)
 
-    # 3. Fallback: local metadata
+    # 3. Fallback: GitHub HTML redirect & release page (avoids API 504s and 60 req/hr rate limits)
+    try:
+        req = urllib.request.Request(
+            "https://github.com/brave/brave-browser/releases/latest",
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            url = resp.geturl()
+            m_tag = re.search(r"/tag/v?([0-9]+\.[0-9]+\.[0-9]+)$", url)
+            if m_tag:
+                tag = m_tag.group(1)
+                content = resp.read(65536).decode("utf-8", errors="ignore")
+                m_cr = re.search(r"\(Chromium\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\)", content)
+                cr = m_cr.group(1) if m_cr else ""
+                return tag, cr
+    except Exception as e:
+        print(f"Note: HTML releases/latest lookup failed: {e}", file=sys.stderr)
+
+    # 4. Fallback: curl on GitHub HTML redirect
+    try:
+        cmd = ["curl", "-sL", "https://github.com/brave/brave-browser/releases/latest"]
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=15)
+        m_tag = re.search(r"releases/tag/v([0-9]+\.[0-9]+\.[0-9]+)", out)
+        if m_tag:
+            tag = m_tag.group(1)
+            m_cr = re.search(r"\(Chromium\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\)", out)
+            cr = m_cr.group(1) if m_cr else ""
+            return tag, cr
+    except Exception as e:
+        print(f"Note: curl HTML lookup failed: {e}", file=sys.stderr)
+
+    # 5. Fallback: local metadata
     meta_dirs = [os.path.join(repo_root, "metadata/releases"), os.path.join(repo_root, "metadata")]
     local_versions = []
     for mdir in meta_dirs:
@@ -122,20 +157,25 @@ def resolve_brave_core_commit(version: str, local_brave: str) -> str:
     return ""
 
 
-def resolve_chromium_version(version: str, local_brave: str) -> str:
-    """Resolves pinned Chromium version string from brave-core package.json."""
-    if local_brave:
-        pkg_file = os.path.join(local_brave, "package.json")
-        if os.path.isfile(pkg_file):
-            try:
-                with open(pkg_file, "r", encoding="utf-8") as f:
-                    pkg_data = json.load(f)
-                if pkg_data.get("version") == version:
-                    cr = pkg_data.get("config", {}).get("projects", {}).get("chrome", {}).get("tag")
-                    if cr:
-                        return cr
-            except Exception:
-                pass
+def resolve_chromium_version(version: str, local_brave: str, repo_root: str = "") -> str:
+    """Resolves pinned Chromium version string from brave-core package.json or GitHub release page."""
+    dirs_to_check = [local_brave]
+    if repo_root:
+        dirs_to_check.append(os.path.join(repo_root, "build-workspace/src/brave"))
+
+    for bdir in dirs_to_check:
+        if bdir and os.path.isdir(bdir):
+            pkg_file = os.path.join(bdir, "package.json")
+            if os.path.isfile(pkg_file):
+                try:
+                    with open(pkg_file, "r", encoding="utf-8") as f:
+                        pkg_data = json.load(f)
+                    if pkg_data.get("version") == version:
+                        cr = pkg_data.get("config", {}).get("projects", {}).get("chrome", {}).get("tag")
+                        if cr:
+                            return cr
+                except Exception:
+                    pass
 
     try:
         pkg_url = f"https://raw.githubusercontent.com/brave/brave-core/v{version}/package.json"
@@ -147,6 +187,31 @@ def resolve_chromium_version(version: str, local_brave: str) -> str:
                 return cr
     except Exception as e:
         print(f"Note: package.json fetch failed: {e}", file=sys.stderr)
+
+    # Fallback: curl on package.json
+    try:
+        cmd = ["curl", "-s", f"https://raw.githubusercontent.com/brave/brave-core/v{version}/package.json"]
+        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=10)
+        pkg_data = json.loads(out)
+        cr = pkg_data.get("config", {}).get("projects", {}).get("chrome", {}).get("tag")
+        if cr:
+            return cr
+    except Exception:
+        pass
+
+    # Fallback: release tag page HTML
+    try:
+        req = urllib.request.Request(
+            f"https://github.com/brave/brave-browser/releases/tag/v{version}",
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            content = resp.read(65536).decode("utf-8", errors="ignore")
+            m = re.search(r"\(Chromium\s+([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)\)", content)
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
 
     return ""
 
@@ -190,6 +255,10 @@ def write_manifests(repo_root: str, brave_version: str, brave_core_commit: str,
     """Writes upstream metadata and release manifest YAML files."""
     build_date = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    branch = get_current_branch(repo_root)
+    package_id = get_package_id(branch)
+    app_name = get_app_name(branch)
+
     metadata_dir = os.path.join(repo_root, "metadata")
     releases_dir = os.path.join(metadata_dir, "releases")
     os.makedirs(releases_dir, exist_ok=True)
@@ -221,8 +290,6 @@ def write_manifests(repo_root: str, brave_version: str, brave_core_commit: str,
         },
         "gn_arguments": {
             "base": {
-                "target_os": "android",
-                "target_cpu": "arm64",
                 "is_debug": False,
                 "is_official_build": True,
                 "is_component_build": False,
@@ -230,10 +297,7 @@ def write_manifests(repo_root: str, brave_version: str, brave_core_commit: str,
                 "disable_fieldtrial_testing_config": True,
             },
             "cerium_overrides": {
-                "chrome_public_manifest_package": "org.cerium.browser",
-                "disable_android_lint": True,
-                "target_android_output_format": "aab",
-                "enable_resource_allowlist_generation": True,
+                "chrome_public_manifest_package": package_id,
             },
         },
     }
@@ -245,15 +309,14 @@ def write_manifests(repo_root: str, brave_version: str, brave_core_commit: str,
         "chromium_version": chromium_version,
         "chromium_commit": chromium_commit,
         "build_date": build_date,
-        "package_id": "org.cerium.browser",
-        "target_architecture": "arm64",
+        "branch": branch,
+        "app_name": app_name,
+        "package_id": package_id,
         "build_arguments": {
-            "target_os": "android",
-            "target_cpu": "arm64",
             "is_debug": False,
             "is_official_build": True,
             "is_component_build": False,
-            "chrome_public_manifest_package": "org.cerium.browser",
+            "chrome_public_manifest_package": package_id,
             "disable_android_lint": True,
             "target_android_output_format": "aab",
             "enable_resource_allowlist_generation": True,
@@ -270,19 +333,25 @@ def write_manifests(repo_root: str, brave_version: str, brave_core_commit: str,
 
 
 def write_env_file(env_path: str, brave_version: str, brave_core_commit: str,
-                   chromium_version: str, chromium_commit: str):
+                   chromium_version: str, chromium_commit: str,
+                   package_id: str, branch: str, app_name: str):
+    safe_app_name = app_name.replace('"', '').replace('$', '').replace('`', '').replace('\\', '')
+    safe_branch = re.sub(r'["`$\\;]', '', branch.strip())
     with open(env_path, "w", encoding="utf-8") as f:
         f.write(f"DYNAMIC_BRAVE_VERSION={brave_version}\n")
         f.write(f"DYNAMIC_BRAVE_CORE_COMMIT={brave_core_commit}\n")
         f.write(f"DYNAMIC_CHROMIUM_VERSION={chromium_version}\n")
         f.write(f"DYNAMIC_CHROMIUM_COMMIT={chromium_commit}\n")
+        f.write(f"DYNAMIC_PACKAGE_ID={package_id}\n")
+        f.write(f'DYNAMIC_CERIUM_BRANCH="{safe_branch}"\n')
+        f.write(f'DYNAMIC_APP_NAME="{safe_app_name}"\n')
 
 
 def main():
     parser = argparse.ArgumentParser(description="Resolve upstream Brave and Chromium versions")
     parser.add_argument("version", nargs="?", default="", help="Brave version (e.g. 1.96.61)")
     parser.add_argument("--repo-root", default=DEFAULT_REPO_ROOT, help="Cerium repository root")
-    parser.add_argument("--local-brave", default=os.environ.get("BRAVE_CORE_DIR", "/run/media/pc/D/brave-core"))
+    parser.add_argument("--local-brave", default=os.environ.get("BRAVE_CORE_DIR", ""))
     parser.add_argument("--env-file", default=None, help="Output dotenv file path")
     args = parser.parse_args()
 
@@ -325,7 +394,7 @@ def main():
             sys.exit(1)
 
     if not chromium_version:
-        chromium_version = resolve_chromium_version(version, args.local_brave)
+        chromium_version = resolve_chromium_version(version, args.local_brave, repo_root)
         if not chromium_version:
             print(f"ERROR: Could not resolve Chromium version for Brave {version}.", file=sys.stderr)
             sys.exit(1)
@@ -336,10 +405,18 @@ def main():
         print(f"ERROR: Exact Chromium tag {chromium_version} commit could not be resolved.", file=sys.stderr)
         sys.exit(1)
 
+    branch = get_current_branch(repo_root)
+    package_id = get_package_id(branch)
+    app_name = get_app_name(branch)
+
     write_manifests(repo_root, version, brave_core_commit, chromium_version, chromium_commit)
-    write_env_file(env_file, version, brave_core_commit, chromium_version, chromium_commit)
+    write_env_file(env_file, version, brave_core_commit, chromium_version, chromium_commit,
+                   package_id, branch, app_name)
 
     print("\nExact Pinned Specification:")
+    print(f" - Branch                 : {branch}")
+    print(f" - Package ID             : {package_id}")
+    print(f" - App Name               : {app_name}")
     print(f" - brave-core release tag : v{version}")
     print(f" - brave-core commit      : {brave_core_commit}")
     print(f" - Pinned Chromium tag    : {chromium_version}")

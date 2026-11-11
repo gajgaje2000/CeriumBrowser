@@ -1,0 +1,117 @@
+"""
+Windows Cross-Compilation Toolchain Mutator (scripts/mutators/platforms/windows/toolchain.py)
+Bypasses FUSE ciopfs mount failure in containerized CI environments and fixes
+NTDDI_VERSION / NTDDI_WIN11_BR defines for Windows SDK cross-compilation.
+"""
+
+import re
+from scripts.mutators.context import MutatorContext
+
+
+def apply(ctx: MutatorContext):
+    re_target_call = re.compile(
+        r"            try:\n"
+        r"                subprocess\.check_call\(\n"
+        r"                    \[\n"
+        r"                        ciopfs,\n"
+        r"                        '-o',\n"
+        r"                        'use_ino',\n"
+        r"                        toolchain_dir \+ '\.ciopfs',\n"
+        r"                        toolchain_dir,\n"
+        r"                    \]\n"
+        r"                \)\n"
+        r"            except [^\n]+:\n"
+        r"[\s\S]*?NOTE: ciopfs mount skipped[\s\S]*?(?:file=sys\.stderr,?\s*\)\s*\n\s+else:\s*\n\s+raise|file=sys\.stderr\))"
+        r"|"
+        r"            subprocess\.check_call\(\n"
+        r"                \[\n"
+        r"                    ciopfs,\n"
+        r"                    '-o',\n"
+        r"                    'use_ino',\n"
+        r"                    toolchain_dir \+ '\.ciopfs',\n"
+        r"                    toolchain_dir,\n"
+        r"                \]\n"
+        r"            \)"
+    )
+
+    safe_call = """            try:
+                subprocess.check_call(
+                    [
+                        ciopfs,
+                        '-o',
+                        'use_ino',
+                        toolchain_dir + '.ciopfs',
+                        toolchain_dir,
+                    ]
+                )
+            except (FileNotFoundError, subprocess.CalledProcessError) as e:
+                if (
+                    isinstance(e, FileNotFoundError)
+                    or not os.path.exists('/dev/fuse')
+                    or not os.access('/dev/fuse', os.R_OK | os.W_OK)
+                    or getattr(e, 'returncode', None) == 127
+                ):
+                    print(
+                        'NOTE: ciopfs mount skipped (unprivileged container or missing FUSE): %s'
+                        % e,
+                        file=sys.stderr,
+                    )
+                else:
+                    raise"""
+
+    ctx.replace_in_src("build/vs_toolchain.py", re_target_call, safe_call)
+
+    re_hash_lookup = re.compile(
+        r"    toolchain_hash_mapping_key = 'GYP_MSVS_HASH_%s' % TOOLCHAIN_HASH\n"
+        r"(?:    return \[os\.environ\.get\(toolchain_hash_mapping_key, TOOLCHAIN_HASH\)\]|"
+        r"    mapped_hash = \(\n"
+        r"        os\.environ\.get\(toolchain_hash_mapping_key\)\n"
+        r"        or os\.environ\.get\('GYP_MSVS_HASH'\)\n"
+        r"        or [^\n]+\n"
+        r"    \)\n"
+        r"(?:    if mapped_hash == TOOLCHAIN_HASH:\n        mapped_hash = [^\n]+\n)?"
+        r"    return \[mapped_hash\])"
+    )
+
+    safe_hash_lookup = """    toolchain_hash_mapping_key = 'GYP_MSVS_HASH_%s' % TOOLCHAIN_HASH
+    mapped_hash = (
+        os.environ.get(toolchain_hash_mapping_key)
+        or os.environ.get('GYP_MSVS_HASH')
+        or '44f9aa3391'
+    )
+    if mapped_hash == TOOLCHAIN_HASH:
+        mapped_hash = os.environ.get('GYP_MSVS_HASH') or '44f9aa3391'
+    return [mapped_hash]"""
+
+    ctx.replace_in_src("build/vs_toolchain.py", re_hash_lookup, safe_hash_lookup)
+
+    re_should_update = re.compile(
+        r"def ShouldUpdateToolchain\(\):\n"
+        r'    """Check if the toolchain should be upgraded."""\n'
+        r"    if not os\.path\.exists\(json_data_file\):\n"
+        r"        return True\n"
+        r"[\s\S]*?"
+        r"    return version != env_version"
+    )
+    safe_should_update = (
+        "def ShouldUpdateToolchain():\n"
+        "    return not os.path.exists(json_data_file)"
+    )
+    ctx.replace_in_src("build/vs_toolchain.py", re_should_update, safe_should_update)
+
+    # Ensure Windows build config defines NTDDI_WIN11_BR and numeric NTDDI_VERSION
+    # so Windows SDK headers (e.g. minwinbase.h defining FILE_INFO_BY_HANDLE_CLASS)
+    # compile cleanly across SDK 26100 and newer.
+    re_winver = re.compile(r'"NTDDI_VERSION=[^"]+",\n')
+    safe_winver = (
+        '"NTDDI_WIN11_BR=0x0A000014",\n'
+        '    "NTDDI_VERSION=0x0A000014",\n'
+    )
+    ctx.replace_in_src(
+        "build/config/win/BUILD.gn",
+        re_winver,
+        safe_winver,
+        check_token="NTDDI_WIN11_BR=0x0A000014",
+    )
+
+

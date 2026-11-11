@@ -1,0 +1,67 @@
+{
+  "stores": [
+    {
+      "name": "CAS_MAIN_STORE",
+      "filesystem": {
+        "content_path": "/tmp/nativelink/cas/content",
+        "temp_path": "/tmp/nativelink/cas/tmp",
+        "eviction_policy": {
+          "max_bytes": "40gb"
+        }
+      }
+    },
+    {
+      "name": "AC_MAIN_STORE",
+      "filesystem": {
+        "content_path": "/tmp/nativelink/ac/content",
+        "temp_path": "/tmp/nativelink/ac/tmp",
+        "eviction_policy": {
+          "max_bytes": "2gb"
+        }
+      }
+    }
+  ],
+  "servers": [
+    {
+      "name": "main_server",
+      "listener": {
+        "http": {
+          "socket_address": "127.0.0.1:50051"
+        }
+      },
+      "services": {
+        "cas": [
+          {
+            "instance_name": "",
+            "cas_store": "CAS_MAIN_STORE"
+          },
+          {
+            "instance_name": "main",
+            "cas_store": "CAS_MAIN_STORE"
+          }
+        ],
+        "ac": [
+          {
+            "instance_name": "",
+            "ac_store": "AC_MAIN_STORE"
+          },
+          {
+            "instance_name": "main",
+            "ac_store": "AC_MAIN_STORE"
+          }
+        ],
+        "bytestream": [
+          {
+            "instance_name": "",
+            "cas_store": "CAS_MAIN_STORE"
+          },
+          {
+            "instance_name": "main",
+            "cas_store": "CAS_MAIN_STORE"
+          }
+        ],
+        "capabilities": []
+      }
+    }
+  ]
+}

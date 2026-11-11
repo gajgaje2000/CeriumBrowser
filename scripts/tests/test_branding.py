@@ -458,6 +458,25 @@ class TestBrandingAssets(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(tmpdir, "android/java/brave-res/drawable-hdpi/btn_brave_off.png")))
             self.assertFalse(os.path.exists(os.path.join(tmpdir, "android/java/brave-res/drawable-mdpi/btn_brave.png")))
 
+    def test_apply_assets_mirrors_to_brave_origin(self):
+        """When app/theme/brave_origin exists, apply-assets.sh mirrors desktop raster PNG logos and win/tiles/."""
+        import subprocess
+        import tempfile
+
+        apply_script = os.path.join(REPO_ROOT, "scripts/core/apply-assets.sh")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            origin_theme = os.path.join(tmpdir, "app/theme/brave_origin")
+            os.makedirs(origin_theme, exist_ok=True)
+            with open(os.path.join(origin_theme, "BRANDING"), "w") as f:
+                f.write("PRODUCT_FULLNAME=Brave Origin\n")
+
+            res = subprocess.run(["bash", apply_script, tmpdir], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, f"apply-assets.sh failed: {res.stderr}\n{res.stdout}")
+            self.assertIn("Mirrored desktop raster branding assets to app/theme/brave_origin/", res.stdout)
+            self.assertTrue(os.path.isfile(os.path.join(origin_theme, "product_logo_128.png")))
+            self.assertTrue(os.path.isfile(os.path.join(origin_theme, "win/tiles/Logo.png")))
+            self.assertTrue(os.path.isfile(os.path.join(origin_theme, "win/tiles/SmallLogo.png")))
+
     def test_aapt2_compile_and_link(self):
         """Deep verification: compile and link all branding XML and Android PNG drawables with AAPT2 if available."""
         import glob

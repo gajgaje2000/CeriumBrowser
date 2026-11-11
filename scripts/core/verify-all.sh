@@ -3,6 +3,7 @@
 # Runs all tests, linters, patch verifiers, and build dry-runs across any release version.
 
 set -euo pipefail
+shopt -s globstar 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -38,27 +39,33 @@ python3 "${REPO_ROOT}/scripts/tests/test_manifest.py"
 
 echo ""
 echo "=== Step 2/6: Mutator Script Syntax & Unit Tests Verification ==="
-python3 -m py_compile "${REPO_ROOT}/scripts/core"/*.py "${REPO_ROOT}/scripts/mutators"/*.py "${REPO_ROOT}/scripts/mutators"/**/*.py
-python3 "${REPO_ROOT}/scripts/tests/test_mutators.py"
-python3 "${REPO_ROOT}/scripts/tests/test_cache_scripts.py"
-python3 "${REPO_ROOT}/scripts/tests/test_branding.py"
+find "${REPO_ROOT}/scripts" -name "*.py" -exec python3 -m py_compile {} +
+if python3 -m pytest --version >/dev/null 2>&1; then
+  python3 -m pytest "${REPO_ROOT}/scripts/tests/" -v
+else
+  python3 "${REPO_ROOT}/scripts/tests/test_branch_utils.py"
+  python3 "${REPO_ROOT}/scripts/tests/test_mutators.py"
+  python3 "${REPO_ROOT}/scripts/tests/test_cache_scripts.py"
+  python3 "${REPO_ROOT}/scripts/tests/test_branding.py"
+fi
 echo " [OK] Python mutators and unit tests verified successfully."
 
 echo ""
-echo "=== Step 3/6: CI Automation Script Verification ==="
-CI_SCRIPTS_DIR="${REPO_ROOT}/scripts/ci"
-if [[ -d "${CI_SCRIPTS_DIR}" ]]; then
-  for script in "${CI_SCRIPTS_DIR}"/*.sh; do
-    if [[ -f "${script}" ]]; then
-      bash -n "${script}"
-      echo "      [PASS] $(basename "${script}") syntax OK"
-    fi
-  done
-  python3 "${REPO_ROOT}/scripts/tests/test_ci_automation.py"
-  echo " [OK] CI automation scripts and unit tests verified successfully."
-else
-  echo " [SKIP] No scripts/ci/ directory found."
+echo "=== Step 3/6: Shell Script Syntax & CI Automation Verification ==="
+HAS_PYTEST=false
+if python3 -m pytest --version >/dev/null 2>&1; then
+  HAS_PYTEST=true
 fi
+for script in "${REPO_ROOT}/scripts"/*.sh "${REPO_ROOT}/scripts/ci"/*.sh "${REPO_ROOT}/scripts/core"/*.sh "${REPO_ROOT}/scripts/platforms"/*/*.sh; do
+  if [[ -f "${script}" ]]; then
+    bash -n "${script}"
+    echo "      [PASS] ${script#${REPO_ROOT}/} syntax OK"
+  fi
+done
+if [[ "${HAS_PYTEST}" != "true" && -f "${REPO_ROOT}/scripts/tests/test_ci_automation.py" ]]; then
+  python3 "${REPO_ROOT}/scripts/tests/test_ci_automation.py"
+fi
+echo " [OK] Shell scripts and CI automation verified successfully."
 
 echo ""
 echo "=== Step 4/6: Patch Set Verification ==="
@@ -76,13 +83,8 @@ if [[ ${PATCH_COUNT} -gt 0 ]]; then
   CHECK_BRAVE_DIRS=()
   if [[ -n "${BRAVE_CORE_DIR:-}" && -d "${BRAVE_CORE_DIR}/.git" ]]; then
     CHECK_BRAVE_DIRS+=("${BRAVE_CORE_DIR}")
-  else
-    if [[ -d "/run/media/pc/D/brave-core/.git" ]]; then
-      CHECK_BRAVE_DIRS+=("/run/media/pc/D/brave-core")
-    fi
-    if [[ -d "${REPO_ROOT}/build-workspace/src/brave/.git" && "${REPO_ROOT}/build-workspace/src/brave" != "/run/media/pc/D/brave-core" ]]; then
-      CHECK_BRAVE_DIRS+=("${REPO_ROOT}/build-workspace/src/brave")
-    fi
+  elif [[ -d "${REPO_ROOT}/build-workspace/src/brave/.git" ]]; then
+    CHECK_BRAVE_DIRS+=("${REPO_ROOT}/build-workspace/src/brave")
   fi
 
   for target_dir in "${CHECK_BRAVE_DIRS[@]}"; do

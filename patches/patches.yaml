@@ -1,0 +1,99 @@
+# Cerium Browser Patch Catalog
+# Declarative manifest of all downstream git patches applied to upstream sources.
+
+categories:
+  - name: "Branding & Identity"
+    description: "Replaces upstream Brave names, package IDs, theme constants, and visual identifiers."
+
+  - name: "Privacy & Telemetry"
+    description: "Eliminates third-party telemetry, tracking pings, and redirects updaters to Cerium infrastructure."
+
+  - name: "Security & Policies"
+    description: "Enforces mandatory privacy-preserving enterprise policies and disables unneeded services."
+
+  - name: "User Experience & Debloating"
+    description: "Removes commercial prompts, rating dialogs, and unlocks power-user features."
+
+patches:
+  # Cross-platform common patches
+  - file: "common/cerium-branding.patch"
+    name: "Cerium Core Release Branding"
+    category: "Branding & Identity"
+    target_os: "common"
+    description: "Sets the master product name, channel constants, and brand definitions."
+    reason: "Establishes independent Cerium identity across all platforms."
+    effect: "Browser identifies as Cerium Browser in UI strings, version dialogs, and themes."
+
+  - file: "common/custom-updater-endpoint.patch"
+    name: "Cerium Independent Component Updater"
+    category: "Privacy & Telemetry"
+    target_os: "common"
+    description: "Points component updates to Cerium CDN and verifies custom publisher key hashes."
+    reason: "Eliminates upstream Brave telemetry pings and enables independent security delivery."
+    effect: "Component updates check Cerium endpoints with strict public key cryptographic verification."
+
+  - file: "common/enforce-enterprise-policies.patch"
+    name: "Mandatory Debloating Enterprise Policies"
+    category: "Security & Policies"
+    target_os: "common"
+    description: "Injects mandatory enterprise policies at startup disabling unneeded upstream subsystems."
+    reason: "Guarantees that VPN, AI chat, Wallet, Rewards, and P3A stats pings are unconditionally disabled without breaking compiler flags."
+    effect: "Disabled services cannot be toggled on or run in the background."
+
+  - file: "common/hide-brave-origin-flag.patch"
+    name: "Hide Origin Feature Flag"
+    category: "User Experience & Debloating"
+    target_os: "common"
+    description: "Hides redundant origin feature flag from chrome://flags."
+    reason: "Prevents confusing duplicate configuration options."
+    effect: "Flags page shows only relevant, supported settings."
+
+  - file: "common/unlock-brave-origin-backend.patch"
+    name: "Unlock Origin Backend Capability"
+    category: "User Experience & Debloating"
+    target_os: "common"
+    description: "Unlocks backend policy state for origin browser capabilities."
+    reason: "Enables advanced capabilities natively without upstream licensing locks."
+    effect: "Origin capabilities operate freely."
+
+  # Desktop Views UI patches
+  - file: "desktop/brave-origin-paywall-bypass.patch"
+    name: "Bypass Desktop Modal Paywall"
+    category: "User Experience & Debloating"
+    target_os: "desktop"
+    description: "Bypasses modal subscription paywall views in desktop Views UI."
+    reason: "Cerium is completely free and open source; paid upsell modals are disabled."
+    effect: "Users have immediate access without upsell dialogs."
+
+  # Android platform patches
+  - file: "android/cerium-branding.patch"
+    name: "Android Channel Constants & Package ID"
+    category: "Branding & Identity"
+    target_os: "android"
+    description: "Configures Android channel constants and manifest package ID."
+    reason: "Ensures independent installation alongside upstream Brave without package ID collision."
+    effect: "Installs as org.ceriumbrowser.cerium with Cerium channels."
+
+  - file: "android/disable-play-in-app-update.patch"
+    name: "Disable Google Play In-App Updates"
+    category: "Privacy & Telemetry"
+    target_os: "android"
+    description: "Removes Google Play Store in-app update checks and prompts."
+    reason: "Cerium is distributed via direct APKs and F-Droid, not the proprietary Google Play Store."
+    effect: "No background connections to Google Play in-app update services."
+
+  - file: "android/remove-rate-brave.patch"
+    name: "Remove Rating Dialogs & Menu Items"
+    category: "User Experience & Debloating"
+    target_os: "android"
+    description: "Removes rate-app dialogs and 'Rate Brave' menu options."
+    reason: "Eliminates unwanted review prompts and declutters settings menus."
+    effect: "Settings menu is cleaner with zero review nagging."
+
+  - file: "android/unlock-brave-origin-prefs.patch"
+    name: "Unlock Android Origin Preferences"
+    category: "User Experience & Debloating"
+    target_os: "android"
+    description: "Exposes origin preference toggles in Android settings."
+    reason: "Allows mobile users full control over advanced features."
+    effect: "Preferences appear in Android browser settings."
