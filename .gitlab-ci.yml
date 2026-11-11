@@ -42,15 +42,12 @@ variables:
 # Pipeline execution rules:
 # - release branch triggers on any push/merge to build and publish official release
 # - manual Web UI execution triggers configurable target compilation
+# - push on other branches never triggers pipeline
 workflow:
   rules:
     - if: '$CI_COMMIT_BRANCH == "release"'
       when: always
     - if: '$CI_PIPELINE_SOURCE == "web"'
-      when: always
-    - if: '$CI_COMMIT_BRANCH =~ /^feat\//'
-      variables:
-        COMPILE_TARGET: "windows_x64"
       when: always
     - when: never
 

@@ -701,12 +701,14 @@ class TestCIScriptSyntax(unittest.TestCase):
             self.assertTrue(bool(tag), "Should resolve tag via HTML fallback")
             self.assertRegex(tag, r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
-    def test_gitlab_ci_feature_branch_workflow(self):
-        """.gitlab-ci.yml workflow rules must include feature branch pattern."""
+    def test_gitlab_ci_workflow_rules(self):
+        """.gitlab-ci.yml workflow rules must trigger automatically on release branch and never on others."""
         ci_file = os.path.join(self.REPO_ROOT, ".gitlab-ci.yml")
         with open(ci_file, "r", encoding="utf-8") as f:
             content = f.read()
-        self.assertIn('$CI_COMMIT_BRANCH =~ /^feat\\//', content)
+        self.assertIn('$CI_COMMIT_BRANCH == "release"', content)
+        self.assertIn('when: never', content)
+        self.assertNotIn('$CI_COMMIT_BRANCH =~ /^feat\\//', content)
 
     def test_scripts_are_executable(self):
         """CI and core scripts must have execute permission."""

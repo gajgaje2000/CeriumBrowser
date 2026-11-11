@@ -48,11 +48,24 @@ def _setup(mock_src):
         '}\n'
     )
 
-    return vs_toolchain, win_build_gn
+    setup_toolchain = mock_src / "build/toolchain/win/setup_toolchain.py"
+    setup_toolchain.parent.mkdir(parents=True, exist_ok=True)
+    setup_toolchain.write_text(
+        "                if envvar in ['include', 'lib']:\n"
+        "                    for part in setting.split(';'):\n"
+        "                        if not os.path.exists(part) and len(part) != 0:\n"
+        "                            raise Exception(\n"
+        "                                'Path \"%s\" from environment variable \"%s\" does not exist. '\n"
+        "                                'Make sure the necessary SDK is installed.'\n"
+        "                                % (part, envvar)\n"
+        "                            )\n"
+    )
+
+    return vs_toolchain, win_build_gn, setup_toolchain
 
 
 def test_apply(mock_brave, mock_src):
-    vs_toolchain, win_build_gn = _setup(mock_src)
+    vs_toolchain, win_build_gn, setup_toolchain = _setup(mock_src)
     ctx = MutatorContext(str(mock_brave), src_dir=str(mock_src), strict=True, target_os="win")
     toolchain.apply(ctx)
 
@@ -66,14 +79,17 @@ def test_apply(mock_brave, mock_src):
     assert '"NTDDI_WIN11_BR=0x0A000014",' in gn_txt
     assert '"NTDDI_VERSION=0x0A000014",' in gn_txt
 
+    st_txt = setup_toolchain.read_text()
+    assert "spectre_cand = part.replace" in st_txt
+
 
 def test_idempotent(mock_brave, mock_src):
-    vs_toolchain, win_build_gn = _setup(mock_src)
+    vs_toolchain, win_build_gn, setup_toolchain = _setup(mock_src)
     ctx = MutatorContext(str(mock_brave), src_dir=str(mock_src), strict=True, target_os="win")
     toolchain.apply(ctx)
-    first = (vs_toolchain.read_text(), win_build_gn.read_text())
+    first = (vs_toolchain.read_text(), win_build_gn.read_text(), setup_toolchain.read_text())
     toolchain.apply(ctx)
-    second = (vs_toolchain.read_text(), win_build_gn.read_text())
+    second = (vs_toolchain.read_text(), win_build_gn.read_text(), setup_toolchain.read_text())
     assert first == second
 
 

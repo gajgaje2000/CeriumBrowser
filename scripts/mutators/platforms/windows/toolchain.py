@@ -4,6 +4,7 @@ Bypasses FUSE ciopfs mount failure in containerized CI environments and fixes
 NTDDI_VERSION / NTDDI_WIN11_BR defines for Windows SDK cross-compilation.
 """
 
+import os
 import re
 from scripts.mutators.context import MutatorContext
 
@@ -113,5 +114,48 @@ def apply(ctx: MutatorContext):
         safe_winver,
         check_token="NTDDI_WIN11_BR=0x0A000014",
     )
+
+    # Ensure setup_toolchain.py auto-bridges atlmfc/lib/arm64 from spectre/arm64
+    # so Windows ARM64 builds do not fail during gn gen due to missing directory.
+    re_missing_lib_check = re.compile(
+        r"                    for part in setting\.split\(';'\):\n"
+        r"                        if not os\.path\.exists\(part\) and len\(part\) != 0:\n"
+        r"                            raise Exception\(\n"
+        r"                                'Path \"%s\" from environment variable \"%s\" does not exist\. '\n"
+        r"                                'Make sure the necessary SDK is installed\.'\n"
+        r"                                % \(part, envvar\)\n"
+        r"                            \)"
+    )
+    safe_missing_lib_check = (
+        "                    for part in setting.split(';'):\n"
+        "                        if not os.path.exists(part) and len(part) != 0:\n"
+        "                            if 'atlmfc' in part.lower():\n"
+        "                                spectre_cand = part.replace(\n"
+        "                                    os.path.join('atlmfc', 'lib', 'arm64'),\n"
+        "                                    os.path.join('atlmfc', 'lib', 'spectre', 'arm64'),\n"
+        "                                )\n"
+        "                                if os.path.isdir(spectre_cand):\n"
+        "                                    try:\n"
+        "                                        os.symlink(spectre_cand, part)\n"
+        "                                    except Exception:\n"
+        "                                        import shutil\n"
+        "                                        shutil.copytree(spectre_cand, part)\n"
+        "                                else:\n"
+        "                                    os.makedirs(part, exist_ok=True)\n"
+        "                            if not os.path.exists(part):\n"
+        "                                raise Exception(\n"
+        "                                    'Path \"%s\" from environment variable \"%s\" does not exist. '\n"
+        "                                    'Make sure the necessary SDK is installed.'\n"
+        "                                    % (part, envvar)\n"
+        "                                )"
+    )
+    setup_toolchain_path = "build/toolchain/win/setup_toolchain.py"
+    if ctx.src_dir and os.path.exists(os.path.join(ctx.src_dir, setup_toolchain_path)):
+        ctx.replace_in_src(
+            setup_toolchain_path,
+            re_missing_lib_check,
+            safe_missing_lib_check,
+            check_token="spectre_cand = part.replace",
+        )
 
 

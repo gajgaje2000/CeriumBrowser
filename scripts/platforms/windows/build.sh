@@ -216,6 +216,26 @@ for path in glob.glob('${SRC_DIR}/third_party/depot_tools/win_toolchain/vs_files
         pass
 " 2>/dev/null || true
 
+# Ensure ARM64 atlmfc/lib/arm64 directory exists (bridge from spectre/arm64 if present)
+python3 -c "
+import os, glob, shutil
+for vs_root in glob.glob('${SRC_DIR}/third_party/depot_tools/win_toolchain/vs_files/*'):
+    for lib_dir in glob.glob(os.path.join(vs_root, 'VC/Tools/MSVC/*/atlmfc/lib')):
+        arm64_dir = os.path.join(lib_dir, 'arm64')
+        spectre_arm64 = os.path.join(lib_dir, 'spectre', 'arm64')
+        if not os.path.exists(arm64_dir):
+            if os.path.isdir(spectre_arm64):
+                try:
+                    os.symlink('spectre/arm64', arm64_dir)
+                    print(f'Symlinked {spectre_arm64} -> {arm64_dir}')
+                except Exception:
+                    shutil.copytree(spectre_arm64, arm64_dir)
+                    print(f'Copied {spectre_arm64} -> {arm64_dir}')
+            else:
+                os.makedirs(arm64_dir, exist_ok=True)
+                print(f'Created directory {arm64_dir}')
+" 2>/dev/null || true
+
 # -----------------------------------------------------------------------------
 # 6. Branding & Version GN Generation
 # -----------------------------------------------------------------------------
