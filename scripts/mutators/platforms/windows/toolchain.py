@@ -1,7 +1,7 @@
 """
 Windows Cross-Compilation Toolchain Mutator (scripts/mutators/platforms/windows/toolchain.py)
-Bypasses FUSE ciopfs mount failure in containerized CI environments and fixes
-NTDDI_VERSION / NTDDI_WIN11_BR defines for Windows SDK cross-compilation.
+Bypasses FUSE ciopfs mount failure in containerized CI environments, fixes
+NTDDI_VERSION / NTDDI_WIN11_BR defines, and marks dbghelp.dll as optional for Windows ARM64 builds.
 """
 
 import os
@@ -99,6 +99,17 @@ def apply(ctx: MutatorContext):
         "    return not os.path.exists(json_data_file)"
     )
     ctx.replace_in_src("build/vs_toolchain.py", re_should_update, safe_should_update)
+
+    # Ensure dbghelp.dll is marked as optional in _CopyDebugger so Windows ARM64 builds
+    # (and toolchains without Debugging Tools) do not fail gn gen when arm64/dbghelp.dll is missing.
+    re_dbghelp = re.compile(r"\('dbghelp\.dll',\s*False\)")
+    safe_dbghelp = "('dbghelp.dll', True)"
+    ctx.replace_in_src(
+        "build/vs_toolchain.py",
+        re_dbghelp,
+        safe_dbghelp,
+        check_token="('dbghelp.dll', True)",
+    )
 
     # Ensure Windows build config defines NTDDI_WIN11_BR and numeric NTDDI_VERSION
     # so Windows SDK headers (e.g. minwinbase.h defining FILE_INFO_BY_HANDLE_CLASS)

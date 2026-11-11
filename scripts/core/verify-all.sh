@@ -43,10 +43,7 @@ find "${REPO_ROOT}/scripts" -name "*.py" -exec python3 -m py_compile {} +
 if python3 -m pytest --version >/dev/null 2>&1; then
   python3 -m pytest "${REPO_ROOT}/scripts/tests/" -v
 else
-  python3 "${REPO_ROOT}/scripts/tests/test_branch_utils.py"
-  python3 "${REPO_ROOT}/scripts/tests/test_mutators.py"
-  python3 "${REPO_ROOT}/scripts/tests/test_cache_scripts.py"
-  python3 "${REPO_ROOT}/scripts/tests/test_branding.py"
+  python3 -m unittest discover -s "${REPO_ROOT}/scripts/tests" -v
 fi
 echo " [OK] Python mutators and unit tests verified successfully."
 

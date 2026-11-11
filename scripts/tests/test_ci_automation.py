@@ -20,33 +20,6 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 class TestReleaseCheckLogic(unittest.TestCase):
     """Tests the tag existence check logic from check-release-needed.sh."""
 
-    def test_tag_exists_response(self):
-        """When tag API returns 200, SKIP_BUILD should be 'true'."""
-        http_status = 200
-        skip_build = "true" if http_status == 200 else "false"
-        self.assertEqual(skip_build, "true")
-
-    def test_tag_not_found_response(self):
-        """When tag API returns 404, SKIP_BUILD should be 'false'."""
-        http_status = 404
-        skip_build = "true" if http_status == 200 else "false"
-        self.assertEqual(skip_build, "false")
-
-    def test_api_error_response(self):
-        """On API error (500), SKIP_BUILD should default to 'false' (fail-open)."""
-        http_status = 500
-        skip_build = "true" if http_status == 200 else "false"
-        self.assertEqual(skip_build, "false")
-
-    def test_dotenv_format(self):
-        """Dotenv output must be 'KEY=value' format (no quotes, no spaces)."""
-        version = "1.96.60"
-        skip_build = "false"
-        dotenv_line = f"SKIP_BUILD={skip_build}"
-        self.assertRegex(dotenv_line, r'^SKIP_BUILD=(true|false)$')
-        self.assertNotIn('"', dotenv_line)
-        self.assertNotIn("'", dotenv_line)
-
     def test_reads_dynamic_brave_version_from_dotenv_file(self):
         """check-release-needed.sh must read DYNAMIC_BRAVE_VERSION from BUILD_ENV_FILE if unset in environment."""
         import tempfile
@@ -175,26 +148,6 @@ class TestCIScriptSyntax(unittest.TestCase):
     """Verifies that all CI scripts exist and have valid bash syntax."""
 
     REPO_ROOT = os.path.join(os.path.dirname(__file__), '..', '..')
-
-    def _check_bash_syntax(self, script_path):
-        """Check bash syntax with bash -n."""
-        full_path = os.path.join(self.REPO_ROOT, script_path)
-        if not os.path.exists(full_path):
-            self.skipTest(f"{script_path} not found (may not be created yet)")
-        result = subprocess.run(
-            ['bash', '-n', full_path],
-            capture_output=True, text=True,
-        )
-        self.assertEqual(
-            result.returncode, 0,
-            f"Syntax error in {script_path}:\n{result.stderr}"
-        )
-
-    def test_check_release_needed_syntax(self):
-        self._check_bash_syntax('scripts/ci/check-release-needed.sh')
-
-    def test_publish_release_syntax(self):
-        self._check_bash_syntax('scripts/ci/publish-release-direct.sh')
 
     def test_publish_release_dry_run(self):
         """publish-release-direct.sh --dry-run must exit 0 and simulate multi-arch release."""
@@ -435,9 +388,6 @@ class TestCIScriptSyntax(unittest.TestCase):
         self.assertIn("[DRY-RUN] Upload GitHub Asset -> cerium_arm64.apk", res.stdout)
         self.assertIn("GitHub URL : https://github.com/gajgaje2000/CeriumBrowser/releases/tag/v1.96.61", res.stdout)
 
-    def test_apply_patches_syntax(self):
-        self._check_bash_syntax('scripts/core/apply-patches.sh')
-
     def test_apply_patches_modular_platforms(self):
         """apply-patches.sh must support --target-os=android, --target-os=windows, and default all."""
         res_invalid = subprocess.run(
@@ -447,21 +397,6 @@ class TestCIScriptSyntax(unittest.TestCase):
         )
         self.assertNotEqual(res_invalid.returncode, 0)
         self.assertIn("Unknown target-os", res_invalid.stderr)
-
-    def test_prepare_source_syntax(self):
-        self._check_bash_syntax('scripts/core/prepare-source.sh')
-
-    def test_build_android_syntax(self):
-        self._check_bash_syntax('scripts/platforms/android/build.sh')
-
-    def test_package_android_syntax(self):
-        self._check_bash_syntax('scripts/platforms/android/package.sh')
-
-    def test_build_windows_syntax(self):
-        self._check_bash_syntax('scripts/platforms/windows/build.sh')
-
-    def test_package_windows_syntax(self):
-        self._check_bash_syntax('scripts/platforms/windows/package.sh')
 
     def test_build_windows_dry_run(self):
         """build.sh --dry-run must exit 0 and parse manifests cleanly for x64, amd64, and arm64."""

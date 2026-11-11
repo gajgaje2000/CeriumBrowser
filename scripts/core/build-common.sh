@@ -746,6 +746,7 @@ shared_upload_cas_cache() {
   if [[ "${exit_code}" -eq 143 || "${exit_code}" -eq 130 ]]; then
     echo ""
     echo "Build cancelled (signal exit ${exit_code}). Stopping compiler processes and flushing NativeLink..."
+    stop_async_prefetch_tasks
     stop_build_watchdog "${WATCHDOG_PID:-}"
     stop_compiler_processes "${OUT_DIR:-}" "${BUILD_PID:-}"
     if [[ -n "${WORKSPACE_DIR:-}" && -n "${OUT_DIR:-}" ]]; then
@@ -915,4 +916,177 @@ gitlab_pkg_upload_file() {
 
   rm -f "${resp_file}"
   echo "Uploaded $(basename "${file_path}") successfully (HTTP ${http_code})."
+}
+
+# -----------------------------------------------------------------------------
+# 9. Asynchronous In-Runner Build Pre-Fetching Architecture
+# -----------------------------------------------------------------------------
+
+_ASYNC_DEPOT_TOOLS_PID=""
+_ASYNC_DEPOT_TOOLS_LOG="/tmp/depot_tools_prefetch.log"
+_ASYNC_WIN_TOOLCHAIN_PID=""
+_ASYNC_WIN_TOOLCHAIN_LOG="/tmp/win_toolchain_prefetch.log"
+_ASYNC_NATIVELINK_PID=""
+_ASYNC_NATIVELINK_LOG="/tmp/nativelink_prefetch.log"
+
+# Clean up any active background prefetch processes on exit/signal
+stop_async_prefetch_tasks() {
+  local pids=("${_ASYNC_DEPOT_TOOLS_PID:-}" "${_ASYNC_WIN_TOOLCHAIN_PID:-}" "${_ASYNC_NATIVELINK_PID:-}")
+  for pid in "${pids[@]}"; do
+    if [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null; then
+      kill "${pid}" 2>/dev/null || true
+    fi
+  done
+}
+
+# Start asynchronous pre-fetching of depot_tools and git compatibility shim.
+# Arguments:
+#   $1: Workspace root directory
+start_async_depot_tools() {
+  local workspace_dir="$1"
+  rm -f "${_ASYNC_DEPOT_TOOLS_LOG}"
+
+  if [[ -d "/opt/depot_tools" ]]; then
+    DEPOT_TOOLS_DIR="/opt/depot_tools"
+    export PATH="${DEPOT_TOOLS_DIR}:${PATH}"
+    export DEPOT_TOOLS_UPDATE=0
+    ensure_git_compatibility_shim "${workspace_dir}" "${DEPOT_TOOLS_DIR}"
+    return 0
+  fi
+
+  echo "Spawning asynchronous depot_tools setup in background..."
+  (
+    ensure_depot_tools "${workspace_dir}"
+    ensure_git_compatibility_shim "${workspace_dir}" "${DEPOT_TOOLS_DIR}"
+  ) > "${_ASYNC_DEPOT_TOOLS_LOG}" 2>&1 &
+  _ASYNC_DEPOT_TOOLS_PID=$!
+}
+
+# Wait for asynchronous depot_tools setup to complete and configure PATH.
+# Arguments:
+#   $1: Workspace root directory
+await_async_depot_tools() {
+  local workspace_dir="$1"
+  if [[ -n "${_ASYNC_DEPOT_TOOLS_PID:-}" ]]; then
+    echo "Synchronizing depot_tools background prefetch (PID: ${_ASYNC_DEPOT_TOOLS_PID})..."
+    if ! wait "${_ASYNC_DEPOT_TOOLS_PID}"; then
+      echo "ERROR: Background depot_tools prefetch failed!" >&2
+      if [[ -f "${_ASYNC_DEPOT_TOOLS_LOG}" ]]; then
+        cat "${_ASYNC_DEPOT_TOOLS_LOG}" >&2
+      fi
+      exit 1
+    fi
+    _ASYNC_DEPOT_TOOLS_PID=""
+    echo "depot_tools background prefetch finished successfully."
+  fi
+
+  if [[ -d "/opt/depot_tools" ]]; then
+    DEPOT_TOOLS_DIR="/opt/depot_tools"
+  else
+    DEPOT_TOOLS_DIR="${workspace_dir}/depot_tools"
+  fi
+  export PATH="${DEPOT_TOOLS_DIR}:${PATH}"
+  export DEPOT_TOOLS_UPDATE=0
+  if [[ -d "${workspace_dir}/git_compat" ]]; then
+    export PATH="${workspace_dir}/git_compat:${PATH}"
+  fi
+}
+
+# Start asynchronous pre-fetching of Windows cross-compilation toolchain.
+# Arguments:
+#   $1: Repository root directory
+#   $2: Workspace root directory
+#   $3: Chromium src directory
+start_async_win_toolchain() {
+  local repo_root="$1"
+  local workspace_dir="$2"
+  local src_dir="$3"
+
+  if [[ "$(uname -s)" != "Linux"* ]]; then
+    return 0
+  fi
+
+  local toolchain_dir="${workspace_dir}/win_toolchain_pkg"
+  mkdir -p "${toolchain_dir}"
+  rm -f "${toolchain_dir}/toolchain.env" "${_ASYNC_WIN_TOOLCHAIN_LOG}"
+
+  echo "Spawning asynchronous Windows toolchain download in background..."
+  (
+    python3 "${repo_root}/scripts/core/setup-win-toolchain.py" \
+      --output-dir="${toolchain_dir}" \
+      --src-dir="${src_dir}" \
+      --prepare
+  ) > "${_ASYNC_WIN_TOOLCHAIN_LOG}" 2>&1 &
+  _ASYNC_WIN_TOOLCHAIN_PID=$!
+}
+
+# Wait for asynchronous Windows toolchain download to complete and source toolchain.env.
+# Arguments:
+#   $1: Workspace root directory
+await_async_win_toolchain() {
+  local workspace_dir="$1"
+
+  if [[ "$(uname -s)" != "Linux"* ]]; then
+    return 0
+  fi
+
+  if [[ -n "${_ASYNC_WIN_TOOLCHAIN_PID:-}" ]]; then
+    echo "Synchronizing Windows toolchain background prefetch (PID: ${_ASYNC_WIN_TOOLCHAIN_PID})..."
+    if ! wait "${_ASYNC_WIN_TOOLCHAIN_PID}"; then
+      echo "ERROR: Background Windows toolchain prefetch failed!" >&2
+      if [[ -f "${_ASYNC_WIN_TOOLCHAIN_LOG}" ]]; then
+        cat "${_ASYNC_WIN_TOOLCHAIN_LOG}" >&2
+      fi
+      exit 1
+    fi
+    _ASYNC_WIN_TOOLCHAIN_PID=""
+    echo "Windows toolchain background prefetch finished successfully."
+  fi
+
+  local toolchain_env="${workspace_dir}/win_toolchain_pkg/toolchain.env"
+  if [[ ! -f "${toolchain_env}" ]]; then
+    echo "ERROR: Toolchain generation completed but fresh output archive was not produced." >&2
+    exit 1
+  fi
+
+  # shellcheck disable=SC1090
+  source "${toolchain_env}"
+  echo "Windows toolchain configured: GYP_MSVS_HASH=${GYP_MSVS_HASH:-}"
+}
+
+# Start asynchronous pre-fetching of NativeLink binary and CAS cache restore.
+# Arguments:
+#   $1: Repository root directory
+#   $2: Workspace root directory
+start_async_nativelink_cache() {
+  local repo_root="$1"
+  local workspace_dir="$2"
+  rm -f "${_ASYNC_NATIVELINK_LOG}"
+
+  echo "Spawning asynchronous NativeLink & CAS cache prefetch in background..."
+  (
+    if [[ -f "${repo_root}/scripts/core/nativelink.sh" ]]; then
+      bash "${repo_root}/scripts/core/nativelink.sh" install
+    fi
+    if [[ -f "${repo_root}/scripts/core/download-cache.sh" ]]; then
+      bash "${repo_root}/scripts/core/download-cache.sh" || true
+    fi
+  ) > "${_ASYNC_NATIVELINK_LOG}" 2>&1 &
+  _ASYNC_NATIVELINK_PID=$!
+}
+
+# Wait for asynchronous NativeLink binary and CAS cache restore to complete.
+await_async_nativelink_cache() {
+  if [[ -n "${_ASYNC_NATIVELINK_PID:-}" ]]; then
+    echo "Synchronizing NativeLink & CAS cache background prefetch (PID: ${_ASYNC_NATIVELINK_PID})..."
+    if ! wait "${_ASYNC_NATIVELINK_PID}"; then
+      echo "WARNING: Background NativeLink/CAS cache prefetch completed with non-zero exit code." >&2
+      if [[ -f "${_ASYNC_NATIVELINK_LOG}" ]]; then
+        cat "${_ASYNC_NATIVELINK_LOG}" >&2
+      fi
+    else
+      echo "NativeLink & CAS cache background prefetch finished successfully."
+    fi
+    _ASYNC_NATIVELINK_PID=""
+  fi
 }

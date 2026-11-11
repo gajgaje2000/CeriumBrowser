@@ -77,9 +77,9 @@ Cerium Repository Structure
 │   │   ├── check-release-needed.sh # Release tag verification for publish stage
 │   │   └── publish-release-direct.sh# Direct release creation via GitLab Releases API
 │   └── tests/                      # [Module 7] Automated Unit & Integration Tests
+│       ├── mutators/               # Modular unit tests per programmatic mutator
 │       ├── test_manifest.py        # Manifest schema & package_id verification
 │       ├── test_branding.py        # Asset dimensions, XML syntax, AAPT2 string limits
-│       ├── test_mutators.py        # Python 3.11 syntax, mutator idempotence, patch checks
 │       ├── test_win_toolchain.py   # Windows toolchain candidates, SetEnv & environment tests
 │       ├── test_ci_automation.py   # CI shell scripts & contract validation
 │       └── test_cache_scripts.py   # Siso timestamp sync & script syntax tests
@@ -155,7 +155,7 @@ Cerium Repository Structure
 ### Module 7: Master Verification Suite
 - `scripts/core/verify-all.sh` orchestrates:
   1. Manifest & upstream metadata schema validation (`test_manifest.py`)
-  2. Python 3.11+ syntax compatibility, toolchain & mutator unit tests (`test_mutators.py`, `test_win_toolchain.py`, `test_ci_automation.py`, `test_cache_scripts.py`)
+  2. Python 3.11+ syntax compatibility, toolchain & mutator unit tests (`scripts/tests/mutators/`, `test_win_toolchain.py`, `test_ci_automation.py`, `test_cache_scripts.py`)
   3. Patch application validation against `brave-core`
   4. Visual branding and AAPT2 asset verification (`verify-branding.sh`, `test_branding.py`)
   5. Multi-platform build and packaging orchestration dry-runs

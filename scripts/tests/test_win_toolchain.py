@@ -182,18 +182,25 @@ class TestWinToolchainManager(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(tmpdir, "toolchain_hash.env")))
 
     def test_win_build_toolchain_wiring(self):
-        """windows/build.sh must clean stale toolchain.env, delegate to setup-win-toolchain.py, and propagate failures."""
+        """windows/build.sh and build-common.sh must clean stale toolchain.env, delegate to setup-win-toolchain.py, and propagate failures."""
         build_sh = os.path.join(REPO_ROOT, "scripts/platforms/windows/build.sh")
+        build_common = os.path.join(REPO_ROOT, "scripts/core/build-common.sh")
         with open(build_sh, "r", encoding="utf-8") as f:
-            content = f.read()
-        self.assertIn("setup-win-toolchain.py", content)
-        self.assertIn("--prepare", content)
-        self.assertIn('source "${TOOLCHAIN_ENV}"', content)
-        self.assertIn('rm -f "${TOOLCHAIN_DIR}/toolchain.env"', content)
-        self.assertIn('echo "ERROR: Toolchain generation failed via setup-win-toolchain.py."', content)
-        self.assertIn('echo "ERROR: Toolchain generation completed but fresh output archive was not produced."', content)
-        self.assertNotIn("--upload", content)
-        self.assertNotIn("Ensure Windows toolchain SetEnv manifests and compiler stubs", content)
+            b_content = f.read()
+        with open(build_common, "r", encoding="utf-8") as f:
+            c_content = f.read()
+        self.assertIn("start_async_win_toolchain", b_content)
+        self.assertIn("await_async_win_toolchain", b_content)
+        self.assertIn("setup-win-toolchain.py", c_content)
+        self.assertIn("--prepare", c_content)
+        self.assertIn('source "${toolchain_env}"', c_content)
+        self.assertIn('rm -f "${toolchain_dir}/toolchain.env"', c_content)
+        self.assertIn('echo "ERROR: Background Windows toolchain prefetch failed!"', c_content)
+        self.assertIn('echo "ERROR: Toolchain generation completed but fresh output archive was not produced."', c_content)
+        win_toolchain_slice = c_content[c_content.find("start_async_win_toolchain"):c_content.find("await_async_win_toolchain")]
+        self.assertNotIn("--upload", b_content)
+        self.assertNotIn("--upload", win_toolchain_slice)
+        self.assertNotIn("Ensure Windows toolchain SetEnv manifests and compiler stubs", b_content)
 
     def test_setenv_manifests_and_stubs(self):
         """build_toolchain_layout must create SetEnv manifests for all arches with VSINSTALLDIR and cl.exe stubs."""

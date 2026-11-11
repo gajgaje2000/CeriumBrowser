@@ -150,12 +150,16 @@ ensure_host_c_compiler "${WORKSPACE_DIR}"
 # Verify prepared brave-core source (Phase 1)
 ensure_prepared_brave_source "${BRAVE_DIR}"
 
-# Initialize or clean Chromium source tree
+# Launch asynchronous background pre-fetches while Chromium source is fetched from Google Source
+start_async_depot_tools "${WORKSPACE_DIR}"
+start_async_win_toolchain "${REPO_ROOT}" "${WORKSPACE_DIR}" "${SRC_DIR}"
+start_async_nativelink_cache "${REPO_ROOT}" "${WORKSPACE_DIR}"
+
+# Initialize or clean Chromium source tree (foreground network I/O from Google Source)
 init_clean_chromium_source "${SRC_DIR}" "${CHROMIUM_VERSION}" "${CHROMIUM_COMMIT}"
 
-# Resolve depot_tools and install Git compatibility wrapper for older Git versions
-ensure_depot_tools "${WORKSPACE_DIR}"
-ensure_git_compatibility_shim "${WORKSPACE_DIR}" "${DEPOT_TOOLS_DIR}"
+# Barrier 1: Ensure depot_tools is ready before writing gclient config and syncing DEPS
+await_async_depot_tools "${WORKSPACE_DIR}"
 
 # -----------------------------------------------------------------------------
 # 4. Chromium DEPS & gclient Sync
@@ -168,33 +172,8 @@ sync_and_patch_chromium "${WORKSPACE_DIR}" "${SRC_DIR}" "${BRAVE_DIR}" "${BRAVE_
 # 5. Windows Cross-Compilation Toolchain Resolution
 # -----------------------------------------------------------------------------
 
-if [[ "$(uname -s)" == "Linux"* ]]; then
-  echo ""
-  echo "4. Checking and preparing Windows cross-compilation toolchain..."
-  TOOLCHAIN_DIR="${WORKSPACE_DIR}/win_toolchain_pkg"
-  mkdir -p "${TOOLCHAIN_DIR}"
-
-  # Delegate candidate hash resolution, registry downloads, integrity validation,
-  # and hermetic xwin generation to setup-win-toolchain.py
-  rm -f "${TOOLCHAIN_DIR}/toolchain.env"
-  if ! python3 "${REPO_ROOT}/scripts/core/setup-win-toolchain.py" \
-      --output-dir="${TOOLCHAIN_DIR}" \
-      --src-dir="${SRC_DIR}" \
-      --prepare; then
-    echo "ERROR: Toolchain generation failed via setup-win-toolchain.py." >&2
-    exit 1
-  fi
-
-  TOOLCHAIN_ENV="${TOOLCHAIN_DIR}/toolchain.env"
-  if [[ ! -f "${TOOLCHAIN_ENV}" ]]; then
-    echo "ERROR: Toolchain generation completed but fresh output archive was not produced." >&2
-    exit 1
-  fi
-
-  # shellcheck disable=SC1090
-  source "${TOOLCHAIN_ENV}"
-  echo "Windows toolchain configured: GYP_MSVS_HASH=${GYP_MSVS_HASH}"
-fi
+# Barrier 2: Ensure Windows toolchain package is ready before gclient runhooks
+await_async_win_toolchain "${WORKSPACE_DIR}"
 
 # Run gclient runhooks on patched Chromium tree
 echo ""
@@ -286,11 +265,9 @@ upload_cas_cache() {
 }
 
 if [[ "${DRY_RUN}" != "true" ]]; then
-  echo ""
-  echo "Restoring NativeLink CAS cache from registry..."
-  if [[ -f "${REPO_ROOT}/scripts/core/download-cache.sh" ]]; then
-    bash "${REPO_ROOT}/scripts/core/download-cache.sh"
-  fi
+  # Barrier 3: Ensure NativeLink binary and CAS cache are ready before starting daemon
+  await_async_nativelink_cache
+
   echo "Starting in-runner NativeLink host daemon on 127.0.0.1:50051 (host: $(uname -m), target: ${TARGET_ARCH})..."
   if [[ -f "${REPO_ROOT}/scripts/core/nativelink.sh" ]]; then
     bash "${REPO_ROOT}/scripts/core/nativelink.sh" start

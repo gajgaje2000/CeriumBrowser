@@ -36,6 +36,13 @@ def _setup(mock_src):
         "        return True\n"
         "    version = '2022'\n"
         "    return version != env_version\n"
+        "\n"
+        "def _CopyDebugger(target_dir, target_cpu):\n"
+        "    debug_files = [\n"
+        "        ('dbghelp.dll', False),\n"
+        "        ('dbgcore.dll', True),\n"
+        "        ('symsrv.dll', True),\n"
+        "    ]\n"
     )
 
     win_build_gn = mock_src / "build/config/win/BUILD.gn"
@@ -74,6 +81,7 @@ def test_apply(mock_brave, mock_src):
     assert "os.environ.get('GYP_MSVS_HASH')" in vs_txt
     assert "'44f9aa3391'" in vs_txt
     assert "return not os.path.exists(json_data_file)" in vs_txt
+    assert "('dbghelp.dll', True)" in vs_txt
 
     gn_txt = win_build_gn.read_text()
     assert '"NTDDI_WIN11_BR=0x0A000014",' in gn_txt

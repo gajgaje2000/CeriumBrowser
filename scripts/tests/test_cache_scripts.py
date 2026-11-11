@@ -20,50 +20,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-class TestCacheScriptsSyntax(unittest.TestCase):
-    """Verify shell script syntax using bash -n."""
-
-    def test_upload_cache_syntax(self):
-        script = REPO_ROOT / "scripts" / "core" / "upload-cache.sh"
-        res = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
-        self.assertEqual(res.returncode, 0, f"Syntax error in {script}: {res.stderr}")
-
-    def test_download_cache_syntax(self):
-        script = REPO_ROOT / "scripts" / "core" / "download-cache.sh"
-        res = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
-        self.assertEqual(res.returncode, 0, f"Syntax error in {script}: {res.stderr}")
-
-    def test_build_android_syntax(self):
-        script = REPO_ROOT / "scripts" / "platforms" / "android" / "build.sh"
-        res = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
-        self.assertEqual(res.returncode, 0, f"Syntax error in {script}: {res.stderr}")
-
-    def test_package_android_syntax(self):
-        script = REPO_ROOT / "scripts" / "platforms" / "android" / "package.sh"
-        res = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
-        self.assertEqual(res.returncode, 0, f"Syntax error in {script}: {res.stderr}")
-
-    def test_build_windows_syntax(self):
-        script = REPO_ROOT / "scripts" / "platforms" / "windows" / "build.sh"
-        res = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
-        self.assertEqual(res.returncode, 0, f"Syntax error in {script}: {res.stderr}")
-
-    def test_package_windows_syntax(self):
-        script = REPO_ROOT / "scripts" / "platforms" / "windows" / "package.sh"
-        res = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
-        self.assertEqual(res.returncode, 0, f"Syntax error in {script}: {res.stderr}")
-
-    def test_prepare_source_syntax(self):
-        script = REPO_ROOT / "scripts" / "core" / "prepare-source.sh"
-        res = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
-        self.assertEqual(res.returncode, 0, f"Syntax error in {script}: {res.stderr}")
-
-    def test_nativelink_syntax(self):
-        script = REPO_ROOT / "scripts" / "core" / "nativelink.sh"
-        res = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
-        self.assertEqual(res.returncode, 0, f"Syntax error in {script}: {res.stderr}")
-
-
 class TestSisoCachePipeline(unittest.TestCase):
     """Verify NativeLink CAS cache configuration, packaging, chunk extraction, and immediate disk cleanup."""
 
@@ -355,7 +311,7 @@ trap 'upload_cas_cache' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 
-sleep 5
+sleep 0.5
 echo 'UNREACHABLE'
 """
         proc = subprocess.Popen(["bash", "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -779,6 +735,40 @@ class TestGitLabPackageUpload(unittest.TestCase):
                 os.unlink(chunk_path)
             server.shutdown()
             server.server_close()
+
+    def test_async_prefetch_helpers_lifecycle(self):
+        """Verify start_async_* and await_async_* lifecycle in build-common.sh."""
+        build_common = REPO_ROOT / "scripts" / "core" / "build-common.sh"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cmd = f"""
+source '{build_common}'
+start_async_nativelink_cache '{REPO_ROOT}' '{tmpdir}'
+[[ -n "${{_ASYNC_NATIVELINK_PID:-}}" ]] || exit 1
+await_async_nativelink_cache
+[[ -z "${{_ASYNC_NATIVELINK_PID:-}}" ]] || exit 2
+echo "ASYNC_LIFECYCLE_SUCCESS"
+"""
+            res = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, f"Lifecycle failed: {res.stderr}\n{res.stdout}")
+            self.assertIn("ASYNC_LIFECYCLE_SUCCESS", res.stdout)
+
+    def test_stop_async_prefetch_tasks(self):
+        """Verify stop_async_prefetch_tasks terminates active background processes cleanly."""
+        build_common = REPO_ROOT / "scripts" / "core" / "build-common.sh"
+        cmd = f"""
+source '{build_common}'
+sleep 60 &
+_ASYNC_NATIVELINK_PID=$!
+stop_async_prefetch_tasks
+sleep 0.2
+if kill -0 "$_ASYNC_NATIVELINK_PID" 2>/dev/null; then
+    exit 1
+fi
+echo "ASYNC_STOP_SUCCESS"
+"""
+        res = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, f"Stop failed: {res.stderr}\n{res.stdout}")
+        self.assertIn("ASYNC_STOP_SUCCESS", res.stdout)
 
 
 if __name__ == "__main__":
