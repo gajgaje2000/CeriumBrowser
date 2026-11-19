@@ -5,6 +5,7 @@ Remaps company path, product path, app name, and ProgIDs in
 chromium_install_modes.h and brave_shell_util.cc to Cerium.
 """
 
+import os
 import re
 from scripts.core.branch_utils import (
     get_current_branch,
@@ -191,26 +192,69 @@ def apply(ctx: MutatorContext):
         'const wchar_t kInstallationRegKey[] =\n    L"Software\\\\Cerium\\\\Update\\\\ClientState";',
     )
 
-    # File 5: updater_state_win.cc
-    for old, new in [
-        (
-            'const wchar_t kGoogleUpdatePoliciesKey[] =\n    L"SOFTWARE\\\\Policies\\\\BraveSoftware\\\\Update";',
-            'const wchar_t kGoogleUpdatePoliciesKey[] =\n    L"SOFTWARE\\\\Policies\\\\Cerium\\\\Update";',
-        ),
-        (
-            'const wchar_t kRegPathGoogleUpdate[] = L"Software\\\\BraveSoftware\\\\Update";',
-            'const wchar_t kRegPathGoogleUpdate[] = L"Software\\\\Cerium\\\\Update";',
-        ),
-        (
-            'const wchar_t kRegPathClientsGoogleUpdate[] =\n    L"Software\\\\BraveSoftware\\\\Update\\\\Clients\\\\"',
-            'const wchar_t kRegPathClientsGoogleUpdate[] =\n    L"Software\\\\Cerium\\\\Update\\\\Clients\\\\"',
-        ),
-    ]:
-        ctx.replace_in_file(
-            "chromium_src/chrome/browser/component_updater/updater_state_win.cc",
-            old,
-            new,
-        )
+    # File 5: updater_state_win.cc (or modern patches/rewrite equivalents in brave-core v1.100+)
+    updater_file = "chromium_src/chrome/browser/component_updater/updater_state_win.cc"
+    updater_patch = "patches/chrome-browser-component_updater-updater_state_win.cc.patch"
+    updater_rewrite = "rewrite/chrome/browser/component_updater/updater_state_win.cc.yaml"
+
+    updater_full_path = os.path.join(ctx.brave_dir, updater_file)
+    has_legacy_updater_constants = False
+    if os.path.exists(updater_full_path):
+        with open(updater_full_path, "r", encoding="utf-8") as f:
+            if "kGoogleUpdatePoliciesKey" in f.read():
+                has_legacy_updater_constants = True
+
+    if has_legacy_updater_constants:
+        for old, new in [
+            (
+                'const wchar_t kGoogleUpdatePoliciesKey[] =\n    L"SOFTWARE\\\\Policies\\\\BraveSoftware\\\\Update";',
+                'const wchar_t kGoogleUpdatePoliciesKey[] =\n    L"SOFTWARE\\\\Policies\\\\Cerium\\\\Update";',
+            ),
+            (
+                'const wchar_t kRegPathGoogleUpdate[] = L"Software\\\\BraveSoftware\\\\Update";',
+                'const wchar_t kRegPathGoogleUpdate[] = L"Software\\\\Cerium\\\\Update";',
+            ),
+            (
+                'const wchar_t kRegPathClientsGoogleUpdate[] =\n    L"Software\\\\BraveSoftware\\\\Update\\\\Clients\\\\"',
+                'const wchar_t kRegPathClientsGoogleUpdate[] =\n    L"Software\\\\Cerium\\\\Update\\\\Clients\\\\"',
+            ),
+        ]:
+            ctx.replace_in_file(updater_file, old, new)
+    else:
+        # In Brave v1.100+, the constants are patched via patches/ and rewrite/
+        if os.path.exists(os.path.join(ctx.brave_dir, updater_patch)):
+            for old, new in [
+                (
+                    '+    L"SOFTWARE\\\\Policies\\\\BraveSoftware\\\\Update";',
+                    '+    L"SOFTWARE\\\\Policies\\\\Cerium\\\\Update";',
+                ),
+                (
+                    '+constexpr wchar_t kRegPathGoogleUpdate[] = L"Software\\\\BraveSoftware\\\\Update";',
+                    '+constexpr wchar_t kRegPathGoogleUpdate[] = L"Software\\\\Cerium\\\\Update";',
+                ),
+                (
+                    '+    L"Software\\\\BraveSoftware\\\\Update\\\\Clients\\\\"',
+                    '+    L"Software\\\\Cerium\\\\Update\\\\Clients\\\\"',
+                ),
+            ]:
+                ctx.replace_in_file(updater_patch, old, new)
+
+        if os.path.exists(os.path.join(ctx.brave_dir, updater_rewrite)):
+            for old, new in [
+                (
+                    'L"SOFTWARE\\\\\\\\Policies\\\\\\\\BraveSoftware\\\\\\\\Update";',
+                    'L"SOFTWARE\\\\\\\\Policies\\\\\\\\Cerium\\\\\\\\Update";',
+                ),
+                (
+                    'L"Software\\\\\\\\BraveSoftware\\\\\\\\Update";',
+                    'L"Software\\\\\\\\Cerium\\\\\\\\Update";',
+                ),
+                (
+                    'L"Software\\\\\\\\BraveSoftware\\\\\\\\Update\\\\\\\\Clients\\\\\\\\"',
+                    'L"Software\\\\\\\\Cerium\\\\\\\\Update\\\\\\\\Clients\\\\\\\\"',
+                ),
+            ]:
+                ctx.replace_in_file(updater_rewrite, old, new)
 
     # File 6: google_update_util.cc
     for old, new in [

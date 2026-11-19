@@ -125,3 +125,39 @@ def test_idempotent(mock_brave):
     branding.apply(ctx)
     r2 = (modes_h.read_text(), shell_cc.read_text(), [f.read_text() for f in extra_files])
     assert r1 == r2
+
+
+def test_apply_modern_v100(mock_brave):
+    modes_h, shell_cc, extra_files = _setup(mock_brave)
+    # In modern v1.100+, updater_state_win.cc does not have the constants
+    f5 = extra_files[4]
+    f5.write_text('#include <chrome/browser/component_updater/updater_state_win.cc>\n')
+
+    # Instead, patches/ and rewrite/ files hold the substitutions
+    patch_file = mock_brave / "patches/chrome-browser-component_updater-updater_state_win.cc.patch"
+    patch_file.parent.mkdir(parents=True, exist_ok=True)
+    patch_file.write_text("""+    L"SOFTWARE\\\\Policies\\\\BraveSoftware\\\\Update";
++constexpr wchar_t kRegPathGoogleUpdate[] = L"Software\\\\BraveSoftware\\\\Update";
++    L"Software\\\\BraveSoftware\\\\Update\\\\Clients\\\\"
+""")
+
+    rewrite_file = mock_brave / "rewrite/chrome/browser/component_updater/updater_state_win.cc.yaml"
+    rewrite_file.parent.mkdir(parents=True, exist_ok=True)
+    rewrite_file.write_text("""L"SOFTWARE\\\\\\\\Policies\\\\\\\\BraveSoftware\\\\\\\\Update";
+L"Software\\\\\\\\BraveSoftware\\\\\\\\Update";
+L"Software\\\\\\\\BraveSoftware\\\\\\\\Update\\\\\\\\Clients\\\\\\\\";
+""")
+
+    ctx = MutatorContext(str(mock_brave), strict=True)
+    branding.apply(ctx)
+
+    assert "Cerium" in patch_file.read_text()
+    assert "BraveSoftware" not in patch_file.read_text()
+    assert "Cerium" in rewrite_file.read_text()
+    assert "BraveSoftware" not in rewrite_file.read_text()
+
+    # Idempotence test for modern v1.100+
+    branding.apply(ctx)
+    assert "Cerium" in patch_file.read_text()
+    assert "BraveSoftware" not in patch_file.read_text()
+
