@@ -259,6 +259,10 @@ write_gclient_config() {
   local target_os="$2"
   local target_cpu="$3"
   local gclient_config="${workspace_dir}/.gclient"
+  local gn_custom_var=""
+  if [[ -n "${CERIUM_GN_REVISION:-}" ]]; then
+    gn_custom_var="      \"gn_version\": \"git_revision:${CERIUM_GN_REVISION}\","
+  fi
 
   echo ""
   echo "Writing gclient configuration to ${gclient_config} (${target_os}/${target_cpu})..."
@@ -288,7 +292,7 @@ solutions = [
       "download_reclient": False,
       "checkout_telemetry_dependencies": False,
       "checkout_nacl": False,
-      "gn_version": "git_revision:${CERIUM_GN_REVISION:-c7ffaf80713afbe5a4f4d95a605c0a98084374de}",
+${gn_custom_var}
     },
   },
   {
@@ -378,18 +382,80 @@ prepare_brave_branding_and_version() {
 ensure_gn_binary() {
   local src_dir="$1"
   mkdir -p "${src_dir}/buildtools/linux64"
-  if [[ ! -x "${src_dir}/buildtools/linux64/gn" ]]; then
-    echo ""
-    echo "Installing hermetic GN binary via CIPD..."
-    local host_arch cipd_arch="amd64"
-    host_arch=$(uname -m)
-    if [[ "${host_arch}" == "aarch64" ]]; then
-      cipd_arch="arm64"
+  local host_arch cipd_arch="amd64"
+  host_arch=$(uname -m)
+  if [[ "${host_arch}" == "aarch64" ]]; then
+    cipd_arch="arm64"
+  fi
+
+  local cipd_cmd="cipd"
+  if ! command -v cipd &>/dev/null; then
+    if [[ -n "${DEPOT_TOOLS_DIR:-}" && -x "${DEPOT_TOOLS_DIR}/cipd" ]]; then
+      cipd_cmd="${DEPOT_TOOLS_DIR}/cipd"
+    elif [[ -x "/opt/depot_tools/cipd" ]]; then
+      cipd_cmd="/opt/depot_tools/cipd"
     fi
-    cipd install "gn/gn/linux-${cipd_arch}" "git_revision:c7ffaf80713afbe5a4f4d95a605c0a98084374de" -root "${src_dir}/buildtools/linux64" || \
-      cipd install "gn/gn/linux-${cipd_arch}" "latest" -root "${src_dir}/buildtools/linux64"
+  fi
+
+  local target_gn_version="${CERIUM_GN_REVISION:-}"
+  if [[ -z "${target_gn_version}" && -f "${src_dir}/DEPS" ]]; then
+    target_gn_version=$(python3 -c "
+import re, sys
+try:
+    with open('${src_dir}/DEPS', 'r', encoding='utf-8') as f:
+        m = re.search(r\"'gn_version':\s*'([^']+)'\", f.read())
+        if m:
+            print(m.group(1))
+            sys.exit(0)
+except Exception:
+    pass
+print('')
+" 2>/dev/null || true)
+  fi
+
+  local gn_tag="${target_gn_version:-latest}"
+  if [[ "${gn_tag}" != git_revision:* && "${gn_tag}" != "latest" ]]; then
+    gn_tag="git_revision:${gn_tag}"
+  fi
+
+  local need_install=true
+  if [[ -x "${src_dir}/buildtools/linux64/gn" ]]; then
+    if "${src_dir}/buildtools/linux64/gn" help dotfile 2>/dev/null | grep -q "no_check_generated_targets"; then
+      need_install=false
+    fi
+  fi
+
+  if [[ "${need_install}" == true ]]; then
+    echo ""
+    echo "Installing hermetic GN binary via CIPD (${gn_tag})..."
+    if command -v "${cipd_cmd}" &>/dev/null || [[ -x "${cipd_cmd}" ]]; then
+      "${cipd_cmd}" init -force "${src_dir}/buildtools/linux64" 2>/dev/null || true
+      "${cipd_cmd}" install "gn/gn/linux-${cipd_arch}" "${gn_tag}" -root "${src_dir}/buildtools/linux64" || \
+        "${cipd_cmd}" install "gn/gn/linux-${cipd_arch}" "latest" -root "${src_dir}/buildtools/linux64" || true
+    fi
     chmod +x "${src_dir}/buildtools/linux64/gn" 2>/dev/null || true
   fi
+
+  # If the installed GN still does not support no_check_generated_targets,
+  # upgrade to latest GN via CIPD for modern dotfile support.
+  if [[ -x "${src_dir}/buildtools/linux64/gn" ]] && ! "${src_dir}/buildtools/linux64/gn" help dotfile 2>/dev/null | grep -q "no_check_generated_targets"; then
+    if command -v "${cipd_cmd}" &>/dev/null || [[ -x "${cipd_cmd}" ]]; then
+      echo "Upgrading GN binary to latest via CIPD for modern dotfile support..."
+      "${cipd_cmd}" init -force "${src_dir}/buildtools/linux64" 2>/dev/null || true
+      "${cipd_cmd}" install "gn/gn/linux-${cipd_arch}" "latest" -root "${src_dir}/buildtools/linux64" || true
+      chmod +x "${src_dir}/buildtools/linux64/gn" 2>/dev/null || true
+    fi
+  fi
+
+  # Fallback safety: If GN still does not support no_check_generated_targets (e.g. offline environment),
+  # neutralize it in .gn to prevent 'Assignment had no effect' failure during gn gen.
+  if [[ -f "${src_dir}/.gn" ]]; then
+    if ! "${src_dir}/buildtools/linux64/gn" help dotfile 2>/dev/null | grep -q "no_check_generated_targets"; then
+      echo "WARNING: Installed GN does not support no_check_generated_targets. Neutralizing in .gn..."
+      sed -i 's/^[[:space:]]*no_check_generated_targets[[:space:]]*=/  # cerium: no_check_generated_targets =/' "${src_dir}/.gn" 2>/dev/null || true
+    fi
+  fi
+
   export PATH="${src_dir}/buildtools/linux64:${PATH}"
 }
 

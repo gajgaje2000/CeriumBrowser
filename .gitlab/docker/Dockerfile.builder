@@ -63,7 +63,7 @@ RUN git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_t
     && (/opt/depot_tools/ensure_bootstrap || /opt/depot_tools/update_depot_tools || true)
 
 # 5. Pre-install hermetic GN binary via CIPD
-RUN /opt/depot_tools/cipd install "gn/gn/linux-amd64" "git_revision:c7ffaf80713afbe5a4f4d95a605c0a98084374de" -root /usr/local/bin || true \
+RUN /opt/depot_tools/cipd install "gn/gn/linux-amd64" "latest" -root /usr/local/bin || true \
     && chmod +x /usr/local/bin/gn 2>/dev/null || true
 
 # 6. Pre-install NativeLink daemon binary (v1.8.3 x86_64)
