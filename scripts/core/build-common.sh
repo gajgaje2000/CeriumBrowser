@@ -320,7 +320,8 @@ sync_and_patch_chromium() {
   local brave_version="$4"
   local target_os="$5"
 
-  unset PYTHONPATH
+  # Export Brave hook PYTHONPATH matching upstream config.ts (excludes depot_tools to prevent utils.py collisions)
+  export PYTHONPATH="${brave_dir}/script:${src_dir}/tools/grit/grit/extern:${brave_dir}/vendor/requests:${src_dir}/build"
   export PYTHONUNBUFFERED="1"
   export GCLIENT_SUPPRESS_GIT_VERSION_WARNING="1"
   export CHROME_HEADLESS="1"
