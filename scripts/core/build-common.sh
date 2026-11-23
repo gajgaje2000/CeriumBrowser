@@ -306,8 +306,7 @@ target_cpu = ["${target_cpu}"]
 EOF
 }
 
-# Export Brave/Chromium hook PYTHONPATH and run gclient sync + upstream Brave
-# patches + version.py/Cerium mutators across both trees.
+# Run gclient sync + upstream Brave patches + version.py/Cerium mutators across both trees.
 # Arguments:
 #   $1: Workspace root directory
 #   $2: Chromium src directory
@@ -321,7 +320,7 @@ sync_and_patch_chromium() {
   local brave_version="$4"
   local target_os="$5"
 
-  export PYTHONPATH="${brave_dir}/script:${src_dir}/tools/grit/grit/extern:${brave_dir}/vendor/requests:${brave_dir}/third_party/cryptography:${brave_dir}/third_party/macholib:${src_dir}/build:${src_dir}/third_party/depot_tools${PYTHONPATH:+:${PYTHONPATH}}"
+  unset PYTHONPATH
   export PYTHONUNBUFFERED="1"
   export GCLIENT_SUPPRESS_GIT_VERSION_WARNING="1"
   export CHROME_HEADLESS="1"
@@ -638,6 +637,9 @@ run_siso_compilation() {
   local CHECKPOINT_TRIGGERED=false
 
   start_build_watchdog "${build_timeout}" "${out_dir}" "${CHECKPOINT_MARKER}"
+
+  # Ensure hermetic Python environment for Siso/Ninja action generators
+  unset PYTHONPATH
 
   local build_cmd="ninja"
   if command -v autoninja &>/dev/null; then

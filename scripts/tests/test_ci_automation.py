@@ -466,6 +466,8 @@ class TestCIScriptSyntax(unittest.TestCase):
         self.assertIn('--shallow', common_content, "Missing --shallow in gclient sync in build-common.sh")
         self.assertIn('$(nproc)', common_content, "Missing nproc parallelism in gclient sync in build-common.sh")
         self.assertIn('CHROME_HEADLESS="1"', common_content, "Missing CHROME_HEADLESS in build-common.sh")
+        self.assertIn('unset PYTHONPATH', common_content, "Missing unset PYTHONPATH in build-common.sh")
+        self.assertNotIn('export PYTHONPATH', common_content, "export PYTHONPATH must not exist in build-common.sh")
 
         for platform_rel in ["scripts/platforms/windows/build.sh", "scripts/platforms/android/build.sh"]:
             build_path = os.path.join(self.REPO_ROOT, platform_rel)
